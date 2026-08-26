@@ -1,10 +1,13 @@
 # Configuration and grader reference
 
 `evalmesh validate MANIFEST` is the authoritative runtime validation command.
-`evalmesh schema manifest|case|run|score` prints the matching Draft 2020-12 JSON
+`evalmesh schema manifest|case|run|score|inventory` prints the matching Draft 2020-12 JSON
 Schema. Private-policy authorization, case-insensitive reserved-header checks, and
 cross-field/privacy rules cannot be expressed fully in the portable schema and are
 enforced by `validate`.
+
+`evalmesh monitor INVENTORY` validates a separate private inventory contract and
+compiles it into a temporary ordinary v1 suite. See [monitoring.md](monitoring.md).
 
 ## Suite manifest
 

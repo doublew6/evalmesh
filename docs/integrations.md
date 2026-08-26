@@ -65,3 +65,7 @@ evalmesh run evalmesh.toml --case smoke-001
 
 The scheduler owns cadence, retries, and notifications. EvalMesh owns attempts,
 scores, and report delivery.
+
+To monitor the scheduler definition or service itself, keep its real identifier in a
+private inventory outside the checkout and invoke `evalmesh monitor INVENTORY`. Run one
+inventory on each host; do not make the EvalMesh core SSH into other machines.

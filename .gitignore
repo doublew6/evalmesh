@@ -14,6 +14,8 @@ build/
 private/
 *.local.toml
 *.private.toml
+*.local.json
+*.private.json
 
 # Never commit credentials or local runtime state.
 .env

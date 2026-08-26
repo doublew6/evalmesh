@@ -9,7 +9,7 @@ Opik can provide the central UI; EvalMesh owns the missing execution contract:
 which subject to invoke, which fixture to use, what counts as passing, and what may
 leave the machine.
 
-## What v0.1 covers
+## What v0.2 covers
 
 - Command, HTTP, and non-interactive Codex targets.
 - Repeated cases for stability measurement.
@@ -19,13 +19,15 @@ leave the machine.
 - Optional Opik reporting through the public Python SDK in a sanitized worker.
 - Default metadata-only capture, HMAC content identifiers, and a repository leak
   scanner.
+- Private host inventories for projects, Skills, scheduled tasks, services, and
+  runtime processes, compiled through the same `PublicRun` privacy boundary.
 
 Codex task scheduling remains owned by Codex or the host scheduler. A scheduled task
 calls `evalmesh run`; EvalMesh records and grades the result.
 
 ## Quick start
 
-EvalMesh v0.1 requires Python 3.11 or newer on macOS or another POSIX host for
+EvalMesh v0.2 requires Python 3.11 or newer on macOS or another POSIX host for
 command/Codex process isolation. From a source checkout, select an interpreter
 explicitly and verify it before creating the environment. The core has no runtime
 dependencies:
@@ -37,6 +39,7 @@ python3.11 -m venv .venv
 python -m pip install -e .
 evalmesh validate examples/echo/evalmesh.toml
 evalmesh run examples/echo/evalmesh.toml
+evalmesh monitor examples/inventory/inventory.example.json
 ```
 
 The default run stores only content-free metadata in `.evalmesh/runs.jsonl` and
@@ -81,7 +84,22 @@ projections all have explicit size/count limits.
 
 See the [configuration and grader reference](docs/reference.md),
 [architecture guide](docs/architecture.md), [privacy model](docs/privacy.md), and
+[agent inventory monitoring guide](docs/monitoring.md), and
 [integration recipes](docs/integrations.md) for the complete source contract.
+
+## Agent inventory monitoring
+
+`evalmesh monitor INVENTORY` checks local agent projects, Skills, Codex scheduled
+task definitions, health endpoints, ports, launchd jobs, and containers. The
+inventory is private execution input: keep real paths, URLs, job labels, automation
+IDs, and repository revisions outside the checkout. Only opaque asset IDs, generic
+tags, timings, and pass/fail scores cross
+the `PublicRun` boundary.
+
+Each host runs its own inventory locally. This avoids sending filesystem paths or
+SSH commands between machines; their sanitized results may share one private Opik
+project. Run `evalmesh schema inventory` for the portable contract and see
+[docs/monitoring.md](docs/monitoring.md) for probe restrictions and scheduler setup.
 
 ## Opik on a private host
 
@@ -140,7 +158,7 @@ targets or untrusted extensions inside a separate account, container, or VM. See
 
 This is an alpha contract-first MVP. The versioned manifests and public run/score
 schemas are the supported contracts. `Reporter` is the current injection point;
-`Adapter` and `Grader` are public typing protocols but `Runner` v0.1 constructs its
+`Adapter` and `Grader` are public typing protocols but `Runner` v0.2 constructs its
 built-ins and does not expose dependency injection for them. CLI exit codes are `0`
 for an evaluation pass, `1` for an evaluation failure, and `2` for configuration or
 reporting failure. Contributions must use synthetic fixtures and are licensed under

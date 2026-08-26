@@ -42,3 +42,4 @@ jobs:
         run: |
           evalmesh validate examples/echo/evalmesh.toml
           evalmesh run examples/echo/evalmesh.toml --output .evalmesh/ci-runs.jsonl
+          evalmesh monitor examples/inventory/inventory.example.json --reporter console

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "host_id": "node-a",
+  "assets": [
+    {
+      "id": "project-a",
+      "kind": "path",
+      "path": "fixture",
+      "path_type": "directory",
+      "tags": ["project"]
+    },
+    {
+      "id": "skill-a",
+      "kind": "skill",
+      "path": "fixture/sample-skill",
+      "tags": ["skill"]
+    }
+  ]
+}

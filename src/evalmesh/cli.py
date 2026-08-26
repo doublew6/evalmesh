@@ -5,13 +5,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import sys
 from importlib import resources
 
 from . import __version__
 from .doctor import scan_public_tree
 from .errors import EvalMeshError
+from .inventory import load_inventory
 from .manifest import load_suite
+from .monitoring import compiled_inventory_suite
 from .reporters import ConsoleReporter, JsonlReporter, OpikReporter
 from .runner import Runner
 
@@ -56,11 +59,30 @@ def _parser() -> argparse.ArgumentParser:
         help="allow an explicit non-loopback TLS Opik endpoint",
     )
 
+    monitor = commands.add_parser(
+        "monitor", help="probe a private agent inventory through the normal privacy gateway"
+    )
+    monitor.add_argument("inventory", help="private inventory JSON")
+    monitor.add_argument(
+        "--reporter",
+        default="console,jsonl",
+        help="comma-separated: console,jsonl,opik",
+    )
+    monitor.add_argument(
+        "--output", default=".evalmesh/monitor-runs.jsonl", help="local JSONL path"
+    )
+    monitor.add_argument(
+        "--allow-remote-opik",
+        action="store_true",
+        help="allow an explicit non-loopback TLS Opik endpoint",
+    )
+    monitor.set_defaults(allow_content=False, allow_content_remote=False)
+
     doctor = commands.add_parser("doctor", help="scan a public tree for likely leaks")
     doctor.add_argument("path", nargs="?", default=".")
 
     schema = commands.add_parser("schema", help="print a bundled JSON Schema")
-    schema.add_argument("name", choices=("manifest", "case", "run", "score"))
+    schema.add_argument("name", choices=("manifest", "case", "run", "score", "inventory"))
     return parser
 
 
@@ -129,6 +151,38 @@ def _run(args: argparse.Namespace) -> int:
     return 0 if batch.passed else 1
 
 
+def _monitor(args: argparse.Namespace) -> int:
+    inventory = load_inventory(args.inventory)
+    variable = "EVALMESH_MONITOR_INVENTORY"
+    key_variable = "EVALMESH_HMAC_KEY"
+    previous_inventory = os.environ.get(variable)
+    previous_key = os.environ.get(key_variable)
+    if previous_key is None:
+        os.environ[key_variable] = secrets.token_hex(32)
+    try:
+        with compiled_inventory_suite(inventory) as suite:
+            os.environ[variable] = str(suite.inventory_path)
+            manifest, cases = load_suite(suite.manifest_path)
+            runner = Runner(manifest, cases, _reporters(args, manifest))
+            batch = runner.run()
+    finally:
+        if previous_inventory is None:
+            os.environ.pop(variable, None)
+        else:
+            os.environ[variable] = previous_inventory
+        if previous_key is None:
+            os.environ.pop(key_variable, None)
+        else:
+            os.environ[key_variable] = previous_key
+    print(
+        f"monitor: assets={len(batch.runs)} healthy={sum(run.passed for run in batch.runs)} "
+        f"reporting={'ok' if batch.reporting_ok else 'failed'}"
+    )
+    if not batch.reporting_ok:
+        return 2
+    return 0 if batch.passed else 1
+
+
 def _doctor(args: argparse.Namespace) -> int:
     findings = scan_public_tree(args.path)
     if not findings:
@@ -159,6 +213,8 @@ def main(argv: list[str] | None = None) -> int:
             return _validate(args)
         if args.command == "run":
             return _run(args)
+        if args.command == "monitor":
+            return _monitor(args)
         if args.command == "doctor":
             return _doctor(args)
         if args.command == "schema":
