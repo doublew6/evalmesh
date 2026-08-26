@@ -1,0 +1,34 @@
+schema_version = 1
+subject_id = "synthetic-echo"
+suite_id = "smoke"
+case_files = ["cases.jsonl"]
+repetitions = 2
+pass_threshold = 1.0
+
+[target]
+kind = "command"
+argv = ["{python}", "echo_agent.py"]
+workspace_mode = "copy"
+output_mode = "json"
+timeout_seconds = 10
+max_output_bytes = 65536
+
+[privacy]
+capture = "digest"
+hmac_key_env = "EVALMESH_HMAC_KEY"
+
+[[graders]]
+id = "process-ok"
+kind = "exit_code"
+expected = 0
+
+[[graders]]
+id = "echo-matches"
+kind = "json_equals"
+actual_path = "message"
+
+[[graders]]
+id = "quality-floor"
+kind = "metric_threshold"
+metric = "synthetic_quality"
+min = 0.9

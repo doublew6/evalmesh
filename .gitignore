@@ -1,0 +1,29 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+dist/
+build/
+
+# Eval outputs may contain private metadata or redacted content.
+.evalmesh/
+private/
+*.local.toml
+*.private.toml
+
+# Never commit credentials or local runtime state.
+.env
+.env.*
+!.env.example
+auth.json
+*.pem
+*.key
+
+# Editors and operating systems.
+.DS_Store
+.idea/
+.vscode/

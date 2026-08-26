@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:evalmesh:schema:manifest:v1",
+  "title": "EvalMesh suite manifest (TOML data model)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "subject_id", "suite_id", "case_files", "target", "graders"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "subject_id": {"$ref": "#/$defs/id"},
+    "suite_id": {"$ref": "#/$defs/id"},
+    "case_files": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/relativeFilePath"}
+    },
+    "repetitions": {"type": "integer", "minimum": 1, "maximum": 100, "default": 1},
+    "pass_threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 1},
+    "target": {"$ref": "#/$defs/target"},
+    "privacy": {"$ref": "#/$defs/privacy"},
+    "graders": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {"$ref": "#/$defs/grader"}
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "env": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+    "targetEnv": {
+      "allOf": [
+        {"$ref": "#/$defs/env"},
+        {"not": {"enum": ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "TMPDIR", "TMP", "TEMP", "PYTHONHOME", "PYTHONPATH", "PYTHONNOUSERSITE", "CODEX_HOME", "EVALMESH_HMAC_KEY"]}},
+        {"not": {"pattern": "^(?:EVALMESH_OPIK_|OPIK_|OTEL_)"}}
+      ]
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "relativeFilePath": {
+      "allOf": [
+        {"$ref": "#/$defs/relativePath"},
+        {"not": {"const": "."}}
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["command", "http", "codex"]},
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 86400, "default": 30},
+        "max_output_bytes": {"type": "integer", "minimum": 1024, "maximum": 16777216, "default": 1048576},
+        "output_mode": {"enum": ["json", "text"], "default": "json"},
+        "workspace_mode": {"enum": ["source", "copy"], "default": "source"},
+        "workspace_path": {"$ref": "#/$defs/relativePath"},
+        "workspace_path_env": {"$ref": "#/$defs/targetEnv"},
+        "artifact_paths": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/relativeFilePath"}
+        },
+        "forward_env": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/targetEnv"}
+        },
+        "use_host_home": {"type": "boolean", "default": false},
+        "use_host_codex_auth": {"type": "boolean", "default": false},
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https?://(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})*)?$"
+        },
+        "url_env": {"$ref": "#/$defs/targetEnv"},
+        "method": {"enum": ["POST", "PUT", "post", "put"], "default": "POST"},
+        "headers_from_env": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": {"pattern": "^[A-Za-z0-9-]+$"},
+          "additionalProperties": {"$ref": "#/$defs/targetEnv"}
+        },
+        "executable": {"type": "string", "minLength": 1, "pattern": "^[^/\\\\]+$", "default": "codex"},
+        "sandbox": {"enum": ["read-only", "workspace-write"], "default": "read-only"},
+        "ephemeral": {"const": true, "default": true},
+        "ignore_user_config": {"const": true, "default": true},
+        "ignore_rules": {"type": "boolean", "default": false},
+        "skip_git_repo_check": {"type": "boolean", "default": false},
+        "prompt_field": {"type": "string", "minLength": 1, "default": "prompt"},
+        "skill": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"}
+      },
+      "allOf": [
+        {
+          "not": {"required": ["workspace_path", "workspace_path_env"]}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "command"}}, "required": ["kind"]},
+          "then": {
+            "required": ["argv", "workspace_mode"],
+            "properties": {"workspace_mode": {"const": "copy"}},
+            "not": {"anyOf": [
+              {"required": ["url"]}, {"required": ["url_env"]}, {"required": ["method"]},
+              {"required": ["headers_from_env"]}, {"required": ["use_host_codex_auth"]},
+              {"required": ["executable"]}, {"required": ["sandbox"]}, {"required": ["ephemeral"]},
+              {"required": ["ignore_user_config"]}, {"required": ["ignore_rules"]},
+              {"required": ["skip_git_repo_check"]}, {"required": ["prompt_field"]}, {"required": ["skill"]}
+            ]}
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"const": "http"}}, "required": ["kind"]},
+          "then": {
+            "oneOf": [{"required": ["url"]}, {"required": ["url_env"]}],
+            "not": {"anyOf": [
+              {"required": ["workspace_mode"]}, {"required": ["workspace_path"]},
+              {"required": ["workspace_path_env"]}, {"required": ["artifact_paths"]},
+              {"required": ["forward_env"]}, {"required": ["use_host_home"]},
+              {"required": ["use_host_codex_auth"]}, {"required": ["argv"]},
+              {"required": ["executable"]}, {"required": ["sandbox"]}, {"required": ["ephemeral"]},
+              {"required": ["ignore_user_config"]}, {"required": ["ignore_rules"]},
+              {"required": ["skip_git_repo_check"]}, {"required": ["prompt_field"]}, {"required": ["skill"]}
+            ]}
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"const": "codex"}}, "required": ["kind"]},
+          "then": {
+            "required": ["workspace_mode", "skip_git_repo_check"],
+            "properties": {
+              "workspace_mode": {"const": "copy"},
+              "skip_git_repo_check": {"const": true}
+            },
+            "not": {"anyOf": [
+              {"required": ["argv"]}, {"required": ["url"]}, {"required": ["url_env"]},
+              {"required": ["method"]}, {"required": ["headers_from_env"]}
+            ]}
+          }
+        }
+      ]
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "capture": {"enum": ["digest", "redacted"], "default": "digest"},
+        "hmac_key_env": {"oneOf": [{"$ref": "#/$defs/env"}, {"type": "null"}], "default": "EVALMESH_HMAC_KEY"},
+        "max_string_chars": {"type": "integer", "minimum": 64, "maximum": 65536, "default": 4096},
+        "max_collection_items": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
+        "max_depth": {"type": "integer", "minimum": 1, "maximum": 32, "default": 8},
+        "additional_secret_keys": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "include_metrics": {"type": "boolean", "default": true},
+        "include_timing": {"type": "boolean", "default": true}
+      }
+    },
+    "graderBase": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "kind": {"type": "string"},
+        "threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 1},
+        "weight": {"type": "number", "exclusiveMinimum": 0, "default": 1},
+        "required": {"type": "boolean", "default": true}
+      }
+    },
+    "grader": {
+      "oneOf": [
+        {"$ref": "#/$defs/exitCodeGrader"},
+        {"$ref": "#/$defs/jsonEqualsGrader"},
+        {"$ref": "#/$defs/containsGrader"},
+        {"$ref": "#/$defs/regexGrader"},
+        {"$ref": "#/$defs/metricThresholdGrader"},
+        {"$ref": "#/$defs/precomputedScoreGrader"},
+        {"$ref": "#/$defs/latencyGrader"},
+        {"$ref": "#/$defs/fileExistsGrader"},
+        {"$ref": "#/$defs/fileContainsGrader"},
+        {"$ref": "#/$defs/fileJsonEqualsGrader"}
+      ]
+    },
+    "exitCodeGrader": {
+      "allOf": [{"$ref": "#/$defs/graderBase"}],
+      "properties": {"kind": {"const": "exit_code"}, "expected": {"type": "integer", "default": 0}},
+      "unevaluatedProperties": false
+    },
+    "jsonEqualsGrader": {
+      "allOf": [{"$ref": "#/$defs/graderBase"}],
+      "properties": {"kind": {"const": "json_equals"}, "actual_path": {"type": "string"}},
+      "unevaluatedProperties": false
+    },
+    "containsGrader": {
+      "allOf": [{"$ref": "#/$defs/graderBase"}],
+      "properties": {
+        "kind": {"const": "contains"}, "actual_path": {"type": "string"},
+        "value": {"type": "string"}, "case_sensitive": {"type": "boolean", "default": true}
+      },
+      "unevaluatedProperties": false
+    },
+    "regexGrader": {
+      "allOf": [{"$ref": "#/$defs/graderBase"}],
+      "required": ["pattern"],
+      "properties": {
+        "kind": {"const": "regex"}, "actual_path": {"type": "string"},
+        "pattern": {"type": "string", "maxLength": 512}, "flags": {"type": "string", "pattern": "^[ims]*$"}
+      },
+      "unevaluatedProperties": false
+    },
+    "metricThresholdGrader": {
+      "allOf": [{"$ref": "#/$defs/graderBase"}],
+      "required": ["metric"],
+      "anyOf": [{"required": ["min"]}, {"required": ["max"]}],
+      "properties": {
+        "kind": {"const": "metric_threshold"}, "metric": {"$ref": "#/$defs/id"},
+        "min": {"type": "number"}, "max": {"type": "number"}
+      },
+      "unevaluatedProperties": false
+    },
+    "precomputedScoreGrader": {
+      "allOf": [{"$ref": "#/$defs/graderBase"}],
+      "required": ["metric"],
+      "properties": {"kind": {"const": "precomputed_score"}, "metric": {"$ref": "#/$defs/id"}},
+      "unevaluatedProperties": false
+    },
+    "latencyGrader": {
+      "allOf": [{"$ref": "#/$defs/graderBase"}],
+      "required": ["max_ms"],
+      "properties": {"kind": {"const": "latency"}, "max_ms": {"type": "number", "minimum": 0}},
+      "unevaluatedProperties": false
+    },
+    "fileExistsGrader": {
+      "allOf": [{"$ref": "#/$defs/graderBase"}],
+      "required": ["path"],
+      "properties": {"kind": {"const": "file_exists"}, "path": {"$ref": "#/$defs/relativeFilePath"}},
+      "unevaluatedProperties": false
+    },
+    "fileContainsGrader": {
+      "allOf": [{"$ref": "#/$defs/graderBase"}],
+      "required": ["path"],
+      "properties": {
+        "kind": {"const": "file_contains"}, "path": {"$ref": "#/$defs/relativeFilePath"},
+        "value": {"type": "string"}, "case_sensitive": {"type": "boolean", "default": true}
+      },
+      "unevaluatedProperties": false
+    },
+    "fileJsonEqualsGrader": {
+      "allOf": [{"$ref": "#/$defs/graderBase"}],
+      "required": ["path"],
+      "properties": {
+        "kind": {"const": "file_json_equals"}, "path": {"$ref": "#/$defs/relativeFilePath"},
+        "actual_path": {"type": "string"}
+      },
+      "unevaluatedProperties": false
+    }
+  }
+}

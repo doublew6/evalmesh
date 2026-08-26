@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:evalmesh:schema:score:v1",
+  "title": "EvalMesh projected score",
+  "$ref": "#/$defs/score",
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "grader_id", "grader_type", "status", "value", "threshold", "passed",
+        "weight", "required", "reason_code"
+      ],
+      "properties": {
+        "grader_id": {"$ref": "#/$defs/id"},
+        "grader_type": {
+          "enum": [
+            "exit_code", "json_equals", "contains", "regex", "metric_threshold",
+            "precomputed_score", "latency", "file_exists", "file_contains", "file_json_equals"
+          ]
+        },
+        "status": {"enum": ["scored", "error", "skipped"]},
+        "value": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "passed": {"type": "boolean"},
+        "weight": {"type": "number", "exclusiveMinimum": 0},
+        "required": {"type": "boolean"},
+        "reason_code": {
+          "enum": [
+            "actual_path_missing", "actual_too_large", "actual_type_invalid",
+            "artifact_checked", "artifact_missing", "artifact_truncated",
+            "case_not_selected", "containment_checked", "equality_checked",
+            "exit_code_checked", "expected_missing", "expected_type_invalid",
+            "grader_config_invalid", "grader_input_invalid", "grader_result_invalid",
+            "latency_checked", "metric_missing", "metric_out_of_range",
+            "metric_threshold_checked", "pattern_checked", "precomputed_score_used",
+            "regex_timeout", "rule_evaluated", "target_result_unavailable"
+          ]
+        }
+      }
+    }
+  }
+}
