@@ -113,6 +113,98 @@ class OtelGatewayTests(unittest.TestCase):
         self.assertFalse(output.exists())
         forward.assert_not_called()
 
+    @staticmethod
+    def _logs_payload() -> dict[str, object]:
+        return {
+            "resourceLogs": [
+                {
+                    "resource": {"attributes": []},
+                    "scopeLogs": [
+                        {
+                            "logRecords": [
+                                {
+                                    "timeUnixNano": "100",
+                                    "attributes": [
+                                        {
+                                            "key": "event.name",
+                                            "value": {"stringValue": "codex.user_prompt"},
+                                        },
+                                        {
+                                            "key": "conversation.id",
+                                            "value": {"stringValue": "opaque-conversation"},
+                                        },
+                                        {
+                                            "key": "prompt",
+                                            "value": {"stringValue": "Synthetic prompt"},
+                                        },
+                                        {
+                                            "key": "user.email",
+                                            "value": {"stringValue": "synthetic-private-identity"},
+                                        },
+                                    ],
+                                },
+                                {
+                                    "timeUnixNano": "101",
+                                    "attributes": [
+                                        {
+                                            "key": "event.name",
+                                            "value": {"stringValue": "codex.tool_result"},
+                                        },
+                                        {
+                                            "key": "output",
+                                            "value": {"stringValue": "discarded tool output"},
+                                        },
+                                    ],
+                                },
+                            ]
+                        }
+                    ],
+                }
+            ]
+        }
+
+    def test_prompt_log_is_filtered_redacted_and_converted_to_trace(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            config = load_otel_gateway_config(self._config(root))
+            app = OtelGatewayApplication(config)
+            with patch("evalmesh.otel_gateway.forward_otlp", return_value=True) as forward:
+                delivered, error = app.accept("synthetic-agent", self._logs_payload(), "logs")
+            output = root / "state" / "synthetic-agent.prompt.otel.jsonl"
+            stored = output.read_text(encoding="utf-8")
+            forwarded = json.loads(forward.call_args.args[2])
+            attributes = forwarded["resourceSpans"][0]["scopeSpans"][0]["spans"][0][
+                "attributes"
+            ]
+        self.assertTrue(delivered)
+        self.assertIsNone(error)
+        self.assertNotIn("discarded tool output", stored)
+        self.assertNotIn("synthetic-private-identity", stored)
+        self.assertIn("Synthetic prompt", stored)
+        self.assertEqual(
+            next(item for item in attributes if item["key"] == "gen_ai.request.input")[
+                "value"
+            ]["stringValue"],
+            "Synthetic prompt",
+        )
+
+    def test_log_batch_without_prompt_is_acknowledged_without_persistence(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            config = load_otel_gateway_config(self._config(root))
+            app = OtelGatewayApplication(config)
+            value = self._logs_payload()
+            value["resourceLogs"][0]["scopeLogs"][0]["logRecords"] = value[
+                "resourceLogs"
+            ][0]["scopeLogs"][0]["logRecords"][1:]
+            with patch("evalmesh.otel_gateway.forward_otlp") as forward:
+                delivered, error = app.accept("synthetic-agent", value, "logs")
+            output = root / "state" / "synthetic-agent.prompt.otel.jsonl"
+        self.assertTrue(delivered)
+        self.assertIsNone(error)
+        self.assertFalse(output.exists())
+        forward.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import http.client
 import os
 import re
@@ -27,7 +28,7 @@ from .url_policy import (
 
 _PUBLIC_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SENSITIVE_OTEL_KEY = re.compile(
-    r"(?:api.?key|authorization|cookie|credential|cwd|environment|env|home|password|path|secret|token)",
+    r"(?:account|api.?key|auth|authorization|cookie|credential|cwd|email|environment|env|home|password|path|secret|token)",
     re.IGNORECASE,
 )
 _ALLOWED_KEYS = frozenset(
@@ -205,13 +206,145 @@ def _redact_otel_attributes(value: Any, replacements: tuple[str, ...]) -> Any:
     return safe
 
 
-def sanitize_otlp_payload(config: OtelGatewayConfig, value: Any) -> dict[str, Any]:
-    if type(value) is not dict or type(value.get("resourceSpans")) is not list:
-        raise ConfigurationError("OTLP gateway accepts trace JSON only")
+def _attribute_string(attributes: Any, key: str) -> str | None:
+    if type(attributes) is not list:
+        return None
+    for attribute in attributes:
+        if type(attribute) is not dict or attribute.get("key") != key:
+            continue
+        value = attribute.get("value")
+        if type(value) is dict and type(value.get("stringValue")) is str:
+            return value["stringValue"]
+    return None
+
+
+def _prompt_log_projection(value: dict[str, Any]) -> dict[str, Any]:
+    resources: list[dict[str, Any]] = []
+    for resource_log in value.get("resourceLogs", []):
+        if type(resource_log) is not dict:
+            continue
+        scopes: list[dict[str, Any]] = []
+        for scope_log in resource_log.get("scopeLogs", []):
+            if type(scope_log) is not dict:
+                continue
+            records = [
+                record
+                for record in scope_log.get("logRecords", [])
+                if type(record) is dict
+                and _attribute_string(record.get("attributes"), "event.name")
+                == "codex.user_prompt"
+                and _attribute_string(record.get("attributes"), "prompt")
+                not in {None, "[REDACTED]"}
+            ]
+            if records:
+                projected_scope = {
+                    key: child
+                    for key, child in scope_log.items()
+                    if key not in {"logRecords", "schemaUrl"}
+                }
+                projected_scope["logRecords"] = records
+                scopes.append(projected_scope)
+        if scopes:
+            projected_resource = {
+                key: child
+                for key, child in resource_log.items()
+                if key not in {"scopeLogs", "schemaUrl"}
+            }
+            projected_resource["scopeLogs"] = scopes
+            resources.append(projected_resource)
+    return {"resourceLogs": resources}
+
+
+def sanitize_otlp_payload(
+    config: OtelGatewayConfig, value: Any, signal: str = "traces"
+) -> dict[str, Any]:
+    expected = "resourceSpans" if signal == "traces" else "resourceLogs"
+    if signal not in {"traces", "logs"} or type(value) is not dict:
+        raise ConfigurationError("OTLP gateway signal is invalid")
+    if type(value.get(expected)) is not list:
+        raise ConfigurationError(f"OTLP gateway accepts {signal} JSON only")
     projected = _redact_otel_attributes(value, config.redact_values)
+    if signal == "logs":
+        projected = _prompt_log_projection(projected)
     if type(projected) is not dict or len(canonical_json_bytes(projected)) > _MAX_REQUEST_BYTES:
-        raise ConfigurationError("OTLP trace payload exceeds the supported size")
+        raise ConfigurationError("OTLP payload exceeds the supported size")
     return projected
+
+
+def _valid_hex_identifier(value: Any, length: int) -> str | None:
+    if (
+        type(value) is str
+        and len(value) == length
+        and value != "0" * length
+        and all(character in "0123456789abcdefABCDEF" for character in value)
+    ):
+        return value.lower()
+    return None
+
+
+def prompt_logs_to_traces(value: dict[str, Any]) -> dict[str, Any]:
+    resource_spans: list[dict[str, Any]] = []
+    for resource_index, resource_log in enumerate(value.get("resourceLogs", [])):
+        scope_spans: list[dict[str, Any]] = []
+        for scope_index, scope_log in enumerate(resource_log.get("scopeLogs", [])):
+            spans: list[dict[str, Any]] = []
+            for record_index, record in enumerate(scope_log.get("logRecords", [])):
+                attributes = list(record.get("attributes", []))
+                prompt = _attribute_string(attributes, "prompt")
+                if prompt is None:
+                    continue
+                timestamp = str(
+                    record.get("timeUnixNano")
+                    or record.get("observedTimeUnixNano")
+                    or "1"
+                )
+                conversation = _attribute_string(attributes, "conversation.id") or "codex"
+                seed = f"{conversation}:{timestamp}:{resource_index}:{scope_index}:{record_index}"
+                trace_id = _valid_hex_identifier(record.get("traceId"), 32)
+                if trace_id is None:
+                    trace_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:32]
+                span_id = _valid_hex_identifier(record.get("spanId"), 16)
+                if span_id is None:
+                    span_id = hashlib.sha256(f"span:{seed}".encode()).hexdigest()[:16]
+                attributes.extend(
+                    [
+                        {
+                            "key": "gen_ai.operation.name",
+                            "value": {"stringValue": "invoke_agent"},
+                        },
+                        {
+                            "key": "gen_ai.request.input",
+                            "value": {"stringValue": prompt},
+                        },
+                    ]
+                )
+                spans.append(
+                    {
+                        "traceId": trace_id,
+                        "spanId": span_id,
+                        "name": "codex.user_prompt",
+                        "kind": 1,
+                        "startTimeUnixNano": timestamp,
+                        "endTimeUnixNano": timestamp,
+                        "attributes": attributes,
+                        "status": {"code": 1},
+                    }
+                )
+            if spans:
+                scope_spans.append(
+                    {
+                        "scope": scope_log.get("scope", {"name": "evalmesh.codex-log-bridge"}),
+                        "spans": spans,
+                    }
+                )
+        if scope_spans:
+            resource_spans.append(
+                {
+                    "resource": resource_log.get("resource", {}),
+                    "scopeSpans": scope_spans,
+                }
+            )
+    return {"resourceSpans": resource_spans}
 
 
 def _opik_otlp_path(base_path: str) -> str:
@@ -255,19 +388,32 @@ class OtelGatewayApplication:
             for project in config.projects
         }
 
-    def accept(self, project: str, value: Any) -> tuple[bool, str | None]:
+    def accept(
+        self, project: str, value: Any, signal: str = "traces"
+    ) -> tuple[bool, str | None]:
         if project not in self.config.projects:
             return False, "route_not_allowed"
         try:
-            projected = sanitize_otlp_payload(self.config, value)
+            projected = sanitize_otlp_payload(self.config, value, signal)
+            if signal == "logs" and not projected["resourceLogs"]:
+                return True, None
             record = {
                 "protocol": "evalmesh.otlp.private.v1",
                 "received_at": datetime.now(UTC).isoformat(),
                 "project_name": project,
+                "signal": signal,
                 "payload": projected,
             }
-            payload = canonical_json_bytes(projected)
-            receipt = self._stores[project].append(canonical_json_bytes(record) + b"\n")
+            payload_value = (
+                projected if signal == "traces" else prompt_logs_to_traces(projected)
+            )
+            payload = canonical_json_bytes(payload_value)
+            store = self._stores[project]
+            if signal == "logs":
+                store = PrivateJsonlStore(
+                    self.config.output_directory / f"{project}.prompt.otel.jsonl"
+                )
+            receipt = store.append(canonical_json_bytes(record) + b"\n")
         except (ConfigurationError, TypeError, ValueError, UnicodeEncodeError):
             return False, "invalid_payload"
         if not receipt.delivered:
@@ -297,8 +443,14 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         self._reply(200 if self.path == "/healthz" else 404)
 
     def do_POST(self) -> None:
-        prefix = "/v1/traces/"
-        project = self.path.removeprefix(prefix) if self.path.startswith(prefix) else ""
+        signal = ""
+        project = ""
+        for candidate in ("traces", "logs"):
+            prefix = f"/v1/{candidate}/"
+            if self.path.startswith(prefix):
+                signal = candidate
+                project = self.path.removeprefix(prefix)
+                break
         if not _PUBLIC_ID.fullmatch(project) or project not in self.app.config.projects:
             self._reply(404)
             return
@@ -317,7 +469,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         except ValueError:
             self._reply(400)
             return
-        delivered, error = self.app.accept(project, value)
+        delivered, error = self.app.accept(project, value, signal)
         if delivered:
             self._reply(200)
         elif error in {"route_not_allowed", "invalid_payload"}:

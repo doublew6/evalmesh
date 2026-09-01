@@ -103,8 +103,11 @@ Start it under the host service manager with:
 evalmesh trace gateway /secure/runtime/gateway.private.json
 ```
 
-Each producer posts OTLP/HTTP JSON to `/v1/traces/PROJECT`. The project must be in the
-private allowlist. The gateway preserves Prompt attributes, recursively removes
+Each producer posts OTLP/HTTP JSON to `/v1/traces/PROJECT`. Codex may additionally
+send its JSON log exporter to `/v1/logs/PROJECT`; that route keeps only unredacted
+`codex.user_prompt` records and converts them to GenAI input spans because Opik does
+not accept the OTLP logs signal. The project must be in the private allowlist. The
+gateway preserves approved prompt attributes, recursively removes
 secret/environment/path attributes and configured values, syncs one private JSONL
 record, then forwards to Opik with the selected project header. It rejects protobuf,
 non-loopback binding, unknown routes, oversized payloads, and an occupied port.
