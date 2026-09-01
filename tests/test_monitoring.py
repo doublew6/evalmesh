@@ -8,7 +8,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
+from evalmesh.cli import _opik_project_groups, main
+from evalmesh.errors import EvalMeshError
 from evalmesh.inventory import load_inventory
 from evalmesh.manifest import load_suite
 from evalmesh.monitoring import compiled_inventory_suite
@@ -68,6 +72,46 @@ def _installed_for_isolated_child() -> bool:
 
 
 class MonitoringTests(unittest.TestCase):
+    def test_public_project_tags_group_monitor_cases(self) -> None:
+        cases = (
+            SimpleNamespace(id="asset-a", tags=("asset", "project:agent-a")),
+            SimpleNamespace(id="asset-b", tags=("asset", "project:agent-b")),
+            SimpleNamespace(id="asset-c", tags=("asset", "project:agent-a")),
+        )
+        self.assertEqual(
+            _opik_project_groups(cases, "project:"),
+            {"agent-a": {"asset-a", "asset-c"}, "agent-b": {"asset-b"}},
+        )
+
+    def test_project_tag_routing_fails_closed_for_missing_or_ambiguous_tags(self) -> None:
+        missing = (SimpleNamespace(id="asset-a", tags=("asset",)),)
+        ambiguous = (
+            SimpleNamespace(
+                id="asset-a",
+                tags=("project:agent-a", "project:agent-b"),
+            ),
+        )
+        for cases in (missing, ambiguous):
+            with self.subTest(cases=cases), self.assertRaises(EvalMeshError):
+                _opik_project_groups(cases, "project:")
+
+    def test_project_tag_routing_requires_opik_reporter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            inventory_path, _private_value = _fixture(Path(directory))
+            with patch("evalmesh.cli.load_inventory") as load:
+                load.side_effect = AssertionError("inventory must not load")
+                code = main(
+                    [
+                        "monitor",
+                        str(inventory_path),
+                        "--reporter",
+                        "console,jsonl",
+                        "--opik-project-from-tag",
+                        "project:",
+                    ]
+                )
+        self.assertEqual(code, 2)
+
     def test_compiled_suite_is_private_content_minimized_and_removed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

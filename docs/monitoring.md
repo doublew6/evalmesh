@@ -101,6 +101,21 @@ export EVALMESH_OPIK_PROJECT=evalmesh-agent-monitoring
 evalmesh monitor /secure/config/evalmesh/node-a.private.json --reporter console,jsonl,opik
 ```
 
+To create one Opik project per monitored agent, give every private inventory asset
+exactly one public routing tag such as `project:agent-a`, then opt in to tag-based
+routing:
+
+```bash
+evalmesh monitor /secure/config/evalmesh/node-a.private.json \
+  --reporter console,jsonl,opik \
+  --opik-project-from-tag project:
+```
+
+The suffix after the prefix becomes the Opik project name. It must be a public
+identifier slug. Routing fails before any probe runs if an asset has no matching tag,
+has more than one, or names an invalid project. Paths, commands, automation content,
+and environment values remain inside the private inventory boundary.
+
 Use launchd, another host scheduler, or a Codex scheduled task to invoke that fixed
 command. Keep reporter routing and credentials in the scheduler environment rather
 than the inventory. An external Fleet heartbeat should also watch the EvalMesh

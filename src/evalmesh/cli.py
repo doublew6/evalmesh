@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import sys
 from importlib import resources
@@ -17,6 +18,9 @@ from .manifest import load_suite
 from .monitoring import compiled_inventory_suite
 from .reporters import ConsoleReporter, JsonlReporter, OpikReporter
 from .runner import Runner
+
+
+_PUBLIC_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 class _SafeArgumentParser(argparse.ArgumentParser):
@@ -76,6 +80,14 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="allow an explicit non-loopback TLS Opik endpoint",
     )
+    monitor.add_argument(
+        "--opik-project-from-tag",
+        metavar="PREFIX",
+        help=(
+            "route each monitored asset to the Opik project named by its single "
+            "PREFIX-prefixed public tag"
+        ),
+    )
     monitor.set_defaults(allow_content=False, allow_content_remote=False)
 
     doctor = commands.add_parser("doctor", help="scan a public tree for likely leaks")
@@ -95,7 +107,7 @@ def _validate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _reporters(args: argparse.Namespace, manifest):
+def _reporters(args: argparse.Namespace, manifest, *, project_name: str | None = None):
     names = [name.strip() for name in args.reporter.split(",") if name.strip()]
     if not names or len(set(names)) != len(names) or set(names) - {"console", "jsonl", "opik"}:
         raise EvalMeshError("--reporter must contain unique console, jsonl, or opik names")
@@ -119,13 +131,38 @@ def _reporters(args: argparse.Namespace, manifest):
             OpikReporter(
                 endpoint=endpoint,
                 workspace=os.environ.get("EVALMESH_OPIK_WORKSPACE", "default"),
-                project_name=os.environ.get("EVALMESH_OPIK_PROJECT", manifest.subject_id),
+                project_name=(
+                    project_name
+                    if project_name is not None
+                    else os.environ.get("EVALMESH_OPIK_PROJECT", manifest.subject_id)
+                ),
                 api_key=os.environ.get("EVALMESH_OPIK_API_KEY") or None,
                 allow_remote=args.allow_remote_opik,
                 include_content=args.allow_content_remote,
             )
         )
     return tuple(result)
+
+
+def _opik_project_groups(cases, prefix: str) -> dict[str, set[str]]:
+    if (
+        type(prefix) is not str
+        or not prefix
+        or len(prefix) > 127
+        or not _PUBLIC_ID.fullmatch(prefix)
+    ):
+        raise EvalMeshError("--opik-project-from-tag requires a public identifier prefix")
+    groups: dict[str, set[str]] = {}
+    for case in cases:
+        project_names = tuple(
+            tag.removeprefix(prefix) for tag in case.tags if tag.startswith(prefix)
+        )
+        if len(project_names) != 1 or not _PUBLIC_ID.fullmatch(project_names[0]):
+            raise EvalMeshError(
+                "each monitored asset must have exactly one valid Opik project routing tag"
+            )
+        groups.setdefault(project_names[0], set()).add(case.id)
+    return groups
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -152,6 +189,9 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def _monitor(args: argparse.Namespace) -> int:
+    reporter_names = {name.strip() for name in args.reporter.split(",") if name.strip()}
+    if args.opik_project_from_tag is not None and "opik" not in reporter_names:
+        raise EvalMeshError("--opik-project-from-tag requires the opik reporter")
     inventory = load_inventory(args.inventory)
     variable = "EVALMESH_MONITOR_INVENTORY"
     key_variable = "EVALMESH_HMAC_KEY"
@@ -163,8 +203,18 @@ def _monitor(args: argparse.Namespace) -> int:
         with compiled_inventory_suite(inventory) as suite:
             os.environ[variable] = str(suite.inventory_path)
             manifest, cases = load_suite(suite.manifest_path)
-            runner = Runner(manifest, cases, _reporters(args, manifest))
-            batch = runner.run()
+            if args.opik_project_from_tag is None:
+                batches = (Runner(manifest, cases, _reporters(args, manifest)).run(),)
+            else:
+                groups = _opik_project_groups(cases, args.opik_project_from_tag)
+                batches = tuple(
+                    Runner(
+                        manifest,
+                        cases,
+                        _reporters(args, manifest, project_name=project_name),
+                    ).run(case_ids)
+                    for project_name, case_ids in sorted(groups.items())
+                )
     finally:
         if previous_inventory is None:
             os.environ.pop(variable, None)
@@ -174,13 +224,16 @@ def _monitor(args: argparse.Namespace) -> int:
             os.environ.pop(key_variable, None)
         else:
             os.environ[key_variable] = previous_key
+    runs = tuple(run for batch in batches for run in batch.runs)
+    reporting_ok = all(batch.reporting_ok for batch in batches)
+    passed = bool(runs) and all(run.passed for run in runs)
     print(
-        f"monitor: assets={len(batch.runs)} healthy={sum(run.passed for run in batch.runs)} "
-        f"reporting={'ok' if batch.reporting_ok else 'failed'}"
+        f"monitor: assets={len(runs)} healthy={sum(run.passed for run in runs)} "
+        f"reporting={'ok' if reporting_ok else 'failed'}"
     )
-    if not batch.reporting_ok:
+    if not reporting_ok:
         return 2
-    return 0 if batch.passed else 1
+    return 0 if passed else 1
 
 
 def _doctor(args: argparse.Namespace) -> int:

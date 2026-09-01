@@ -100,6 +100,8 @@ Each host runs its own inventory locally. This avoids sending filesystem paths o
 SSH commands between machines; their sanitized results may share one private Opik
 project. Run `evalmesh schema inventory` for the portable contract and see
 [docs/monitoring.md](docs/monitoring.md) for probe restrictions and scheduler setup.
+Monitors may instead route assets into separate Opik projects using one explicit
+public tag per asset; private paths and probe configuration never become routing data.
 
 ## Opik on a private host
 
