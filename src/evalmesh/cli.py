@@ -16,6 +16,7 @@ from .errors import EvalMeshError
 from .inventory import load_inventory
 from .manifest import load_suite
 from .monitoring import compiled_inventory_suite
+from .otel_gateway import serve_otel_gateway
 from .reporters import ConsoleReporter, JsonlReporter, OpikReporter
 from .runner import Runner
 from .runtime_tracing import parse_runtime_event, submit_runtime_trace
@@ -98,6 +99,12 @@ def _parser() -> argparse.ArgumentParser:
         "ingest", help="read one runtime trace envelope from stdin"
     )
     trace_ingest.add_argument(
+        "config", help="mode-0600 private JSON config outside every Git worktree"
+    )
+    trace_gateway = trace_commands.add_parser(
+        "gateway", help="serve loopback OTLP/HTTP JSON with local-first Opik forwarding"
+    )
+    trace_gateway.add_argument(
         "config", help="mode-0600 private JSON config outside every Git worktree"
     )
 
@@ -268,15 +275,18 @@ def _doctor(args: argparse.Namespace) -> int:
 
 
 def _trace(args: argparse.Namespace) -> int:
-    if args.trace_command != "ingest":
-        return 2
-    event = parse_runtime_event(sys.stdin.buffer.read(2 * 1024 * 1024 + 1))
-    receipt = submit_runtime_trace(args.config, event)
-    print(
-        f"trace: stored={'yes' if receipt.stored else 'no'} "
-        f"reporting={'ok' if receipt.delivered else 'failed'}"
-    )
-    return 0 if receipt.delivered else 2
+    if args.trace_command == "ingest":
+        event = parse_runtime_event(sys.stdin.buffer.read(2 * 1024 * 1024 + 1))
+        receipt = submit_runtime_trace(args.config, event)
+        print(
+            f"trace: stored={'yes' if receipt.stored else 'no'} "
+            f"reporting={'ok' if receipt.delivered else 'failed'}"
+        )
+        return 0 if receipt.delivered else 2
+    if args.trace_command == "gateway":
+        serve_otel_gateway(args.config)
+        return 0
+    return 2
 
 
 def _schema(args: argparse.Namespace) -> int:

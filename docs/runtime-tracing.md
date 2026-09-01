@@ -79,6 +79,36 @@ hooks to produce the same hierarchy. Codex supports opt-in OTLP export without c
 changes. Keep prompt capture enabled only when its exporter is routed to the same
 approved private Opik boundary; do not put a prompt in Codex configuration.
 
+## Shared OTLP gateway
+
+Native OpenTelemetry producers can share one loopback-only JSON gateway. Give it a
+separate mode-`0600` config outside Git:
+
+```json
+{
+  "schema_version": 1,
+  "listen_host": "127.0.0.1",
+  "listen_port": 14318,
+  "endpoint": "http://127.0.0.1:5173/api",
+  "workspace": "default",
+  "projects": ["agent-a", "agent-b"],
+  "output_directory": "/secure/runtime/otel",
+  "redact_values": []
+}
+```
+
+Start it under the host service manager with:
+
+```text
+evalmesh trace gateway /secure/runtime/gateway.private.json
+```
+
+Each producer posts OTLP/HTTP JSON to `/v1/traces/PROJECT`. The project must be in the
+private allowlist. The gateway preserves Prompt attributes, recursively removes
+secret/environment/path attributes and configured values, syncs one private JSONL
+record, then forwards to Opik with the selected project header. It rejects protobuf,
+non-loopback binding, unknown routes, oversized payloads, and an occupied port.
+
 ## Delivery guarantees
 
 The projected record is transactionally appended and synced to its private JSONL
