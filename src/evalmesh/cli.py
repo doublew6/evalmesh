@@ -207,13 +207,19 @@ def _monitor(args: argparse.Namespace) -> int:
                 batches = (Runner(manifest, cases, _reporters(args, manifest)).run(),)
             else:
                 groups = _opik_project_groups(cases, args.opik_project_from_tag)
-                batches = tuple(
-                    Runner(
-                        manifest,
-                        cases,
-                        _reporters(args, manifest, project_name=project_name),
-                    ).run(case_ids)
+                project_runners = tuple(
+                    (
+                        Runner(
+                            manifest,
+                            cases,
+                            _reporters(args, manifest, project_name=project_name),
+                        ),
+                        case_ids,
+                    )
                     for project_name, case_ids in sorted(groups.items())
+                )
+                batches = tuple(
+                    runner.run(case_ids) for runner, case_ids in project_runners
                 )
     finally:
         if previous_inventory is None:
