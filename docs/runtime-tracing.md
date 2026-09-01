@@ -124,3 +124,29 @@ This layer cannot infer tool calls hidden inside an opaque executable. A black-b
 launcher can observe process duration and final output only. Tool-level visibility
 requires native telemetry, a framework callback, or one hook at the Agent's shared
 tool dispatcher.
+
+## Startup-only Python instrumentation
+
+Python Agents using LangChain/LangGraph or the OpenAI/Anthropic SDKs can share one
+private startup hook instead of adding decorators throughout application code. Install
+the matching OpenInference instrumentor packages in the Agent's own virtual environment,
+then place a private `sitecustomize.py` outside every repository:
+
+```python
+from evalmesh.auto_instrumentation import install_from_environment
+
+install_from_environment()
+```
+
+The service manager supplies only `EVALMESH_AUTO_INSTRUMENT=1`, an opaque
+`EVALMESH_OTEL_PROJECT`, a loopback `EVALMESH_OTEL_ENDPOINT`, and the private bootstrap
+directory on `PYTHONPATH`. The bootstrap creates a standard OpenTelemetry provider,
+enables each installed OpenInference instrumentor, and exports OTLP/HTTP JSON through
+the shared local-first gateway. Prompt, response, and tool values originate inside the
+running Agent and are never configuration values. If instrumentation is missing or
+fails, the Agent continues without telemetry.
+
+This startup hook is intentionally optional: EvalMesh's core installation remains
+dependency-free. Install instrumentors into the same environment as the Agent so their
+versions are resolved against that Agent's framework packages, and validate one real
+request before enabling the next service.
