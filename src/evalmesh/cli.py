@@ -18,7 +18,7 @@ from .manifest import load_suite
 from .monitoring import compiled_inventory_suite
 from .reporters import ConsoleReporter, JsonlReporter, OpikReporter
 from .runner import Runner
-
+from .runtime_tracing import parse_runtime_event, submit_runtime_trace
 
 _PUBLIC_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
@@ -89,6 +89,17 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     monitor.set_defaults(allow_content=False, allow_content_remote=False)
+
+    trace = commands.add_parser(
+        "trace", help="ingest real Agent execution traces through a private runtime policy"
+    )
+    trace_commands = trace.add_subparsers(dest="trace_command", required=True)
+    trace_ingest = trace_commands.add_parser(
+        "ingest", help="read one runtime trace envelope from stdin"
+    )
+    trace_ingest.add_argument(
+        "config", help="mode-0600 private JSON config outside every Git worktree"
+    )
 
     doctor = commands.add_parser("doctor", help="scan a public tree for likely leaks")
     doctor.add_argument("path", nargs="?", default=".")
@@ -256,6 +267,18 @@ def _doctor(args: argparse.Namespace) -> int:
     return 1
 
 
+def _trace(args: argparse.Namespace) -> int:
+    if args.trace_command != "ingest":
+        return 2
+    event = parse_runtime_event(sys.stdin.buffer.read(2 * 1024 * 1024 + 1))
+    receipt = submit_runtime_trace(args.config, event)
+    print(
+        f"trace: stored={'yes' if receipt.stored else 'no'} "
+        f"reporting={'ok' if receipt.delivered else 'failed'}"
+    )
+    return 0 if receipt.delivered else 2
+
+
 def _schema(args: argparse.Namespace) -> int:
     resource = resources.files("evalmesh.schemas").joinpath(f"{args.name}.schema.json")
     print(resource.read_text(encoding="utf-8"), end="")
@@ -274,6 +297,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run(args)
         if args.command == "monitor":
             return _monitor(args)
+        if args.command == "trace":
+            return _trace(args)
         if args.command == "doctor":
             return _doctor(args)
         if args.command == "schema":

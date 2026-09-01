@@ -11,6 +11,7 @@ from .models import (
 )
 from .ports import Adapter, Grader, Reporter
 from .runner import Runner
+from .runtime_tracing import RuntimeTracer, RuntimeTraceReceipt, submit_runtime_trace
 
 __all__ = [
     "Adapter",
@@ -21,9 +22,12 @@ __all__ = [
     "PublicRun",
     "Reporter",
     "Runner",
+    "RuntimeTracer",
+    "RuntimeTraceReceipt",
     "Score",
     "TargetSpec",
     "load_suite",
+    "submit_runtime_trace",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

@@ -184,7 +184,13 @@ def _rollback_append(
         return False
 
 
-class JsonlReporter:
+class PrivateJsonlStore:
+    """Durably append already-serialized private records without following links.
+
+    This is intentionally a storage primitive rather than a Reporter. Reporter
+    implementations still accept their declared public domain type only.
+    """
+
     __slots__ = (
         "_absolute_parent",
         "_failed",
@@ -192,12 +198,6 @@ class JsonlReporter:
         "_sealed",
         "path",
     )
-
-    remote = False
-    durable = True
-    redaction_secret_values: tuple[str, ...] = ()
-    credential_secret_values: tuple[str, ...] = ()
-    reportable_values: tuple[str, ...] = ()
 
     def __setattr__(self, name: str, value: object) -> None:
         if getattr(self, "_sealed", False) and name != "_failed":
@@ -217,15 +217,14 @@ class JsonlReporter:
         self._failed = False
         self._sealed = True
 
-    def report(self, run: PublicRun) -> ReportReceipt:
-        if type(run) is not PublicRun:
-            raise TypeError("JsonlReporter accepts PublicRun only")
+    def append(self, record: bytes) -> ReportReceipt:
+        if type(record) is not bytes or not record or not record.endswith(b"\n"):
+            raise TypeError("PrivateJsonlStore accepts one complete bytes record")
         if self._failed:
             return _failure()
         try:
             leaf_is_symlink = self.path.is_symlink()
-            record = (public_json(run) + "\n").encode("utf-8")
-        except (OSError, RuntimeError, TypeError, UnicodeEncodeError, ValueError):
+        except (OSError, RuntimeError):
             return _failure()
         if self._leaf_was_symlink or leaf_is_symlink or not self.path.name:
             return _failure("local_store_symlink_rejected")
@@ -347,3 +346,35 @@ class JsonlReporter:
 
     def close(self) -> None:
         return None
+
+
+class JsonlReporter:
+    __slots__ = ("_sealed", "_store")
+
+    remote = False
+    durable = True
+    redaction_secret_values: tuple[str, ...] = ()
+    credential_secret_values: tuple[str, ...] = ()
+    reportable_values: tuple[str, ...] = ()
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("JsonlReporter configuration is immutable")
+        object.__setattr__(self, name, value)
+
+    def __init__(self, path: str | Path) -> None:
+        self._sealed = False
+        self._store = PrivateJsonlStore(path)
+        self._sealed = True
+
+    def report(self, run: PublicRun) -> ReportReceipt:
+        if type(run) is not PublicRun:
+            raise TypeError("JsonlReporter accepts PublicRun only")
+        try:
+            record = (public_json(run) + "\n").encode("utf-8")
+        except (TypeError, UnicodeEncodeError, ValueError):
+            return _failure()
+        return self._store.append(record)
+
+    def close(self) -> None:
+        self._store.close()
