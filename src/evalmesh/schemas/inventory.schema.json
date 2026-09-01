@@ -200,6 +200,7 @@
         "kind": {"const": "docker"},
         "tags": {"$ref": "#/$defs/tags"},
         "name": {"$ref": "#/$defs/label"},
+        "host": {"type": "string", "minLength": 1, "maxLength": 4096},
         "expected_running": {"type": "boolean", "default": true}
       }
     }

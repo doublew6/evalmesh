@@ -252,6 +252,64 @@ class InventoryTests(unittest.TestCase):
                 os.utime(activity, (far_future, far_future))
                 self.assertFalse(probe_asset(inventory, "automation-a").healthy)
 
+    def test_docker_probe_accepts_only_an_explicit_local_host(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            valid = _inventory(
+                root / "docker.private.json",
+                [
+                    {
+                        "id": "docker-a",
+                        "kind": "docker",
+                        "name": "synthetic-container",
+                        "host": "unix:///var/run/docker.sock",
+                    }
+                ],
+            )
+            inventory = load_inventory(valid)
+            with (
+                patch("evalmesh.inventory.shutil.which", return_value="/usr/bin/docker"),
+                patch(
+                    "evalmesh.inventory._run_bounded_output",
+                    return_value=(0, b"true\n"),
+                ) as run,
+            ):
+                result = probe_asset(inventory, "docker-a")
+
+            self.assertTrue(result.healthy)
+            self.assertEqual(
+                run.call_args.args[0],
+                [
+                    "/usr/bin/docker",
+                    "--host",
+                    "unix:///var/run/docker.sock",
+                    "inspect",
+                    "--format={{.State.Running}}",
+                    "synthetic-container",
+                ],
+            )
+
+            for index, host in enumerate(
+                (
+                    "tcp://example.invalid:2375",
+                    "unix://relative.sock",
+                    "https://127.0.0.1:2375",
+                )
+            ):
+                invalid = _inventory(
+                    root / f"invalid-{index}.json",
+                    [
+                        {
+                            "id": "docker-a",
+                            "kind": "docker",
+                            "name": "synthetic-container",
+                            "host": host,
+                        }
+                    ],
+                )
+                with self.subTest(host=host), self.assertRaises(ConfigurationError):
+                    load_inventory(invalid)
+
     def test_rejects_unknown_fields_duplicate_ids_and_symlink_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

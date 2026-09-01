@@ -63,7 +63,7 @@ _KIND_KEYS: dict[str, frozenset[str]] = {
             "max_activity_age_seconds",
         }
     ),
-    "docker": frozenset({"name", "expected_running"}),
+    "docker": frozenset({"name", "host", "expected_running"}),
     "git": frozenset({"path", "expected_revision", "require_clean"}),
     "http": frozenset({"url", "expected_status"}),
     "launchd": frozenset({"label", "expected_loaded", "expected_last_exit"}),
@@ -158,6 +158,39 @@ def _relative_or_absolute_path(value: object) -> str:
     result = _bounded_string(value)
     path = Path(result)
     if not path.is_absolute() and ".." in path.parts:
+        raise _fail()
+    return result
+
+
+def _docker_host(value: object) -> str | None:
+    if value is None:
+        return None
+    result = _bounded_string(value)
+    try:
+        parsed = urlsplit(result)
+        port = parsed.port
+    except ValueError as exc:
+        raise _fail() from exc
+    if (
+        parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise _fail()
+    if parsed.scheme == "unix":
+        path = Path(parsed.path)
+        if parsed.netloc or not path.is_absolute() or ".." in path.parts or not path.name:
+            raise _fail()
+    elif parsed.scheme == "tcp":
+        if (
+            parsed.hostname not in _LOOPBACK_HOSTS
+            or port is None
+            or not 1 <= port <= 65_535
+            or parsed.path not in {"", "/"}
+        ):
+            raise _fail()
+    else:
         raise _fail()
     return result
 
@@ -315,7 +348,11 @@ def _validated_config(kind: str, raw: dict[str, Any]) -> dict[str, Any]:
         name = _bounded_string(raw.get("name"), maximum=256)
         if not _LABEL.fullmatch(name):
             raise _fail()
-        result.update(name=name, expected_running=_boolean(raw.get("expected_running"), True))
+        result.update(
+            name=name,
+            host=_docker_host(raw.get("host")),
+            expected_running=_boolean(raw.get("expected_running"), True),
+        )
     elif kind == "git":
         expected_revision = raw.get("expected_revision")
         if expected_revision is not None:
@@ -849,8 +886,16 @@ def _docker_health(asset: AssetSpec) -> bool:
             private_home.chmod(0o700)
             environment = _command_environment()
             environment.update(HOME=directory, DOCKER_CONFIG=directory)
+            host = asset.config["host"]
+            host_arguments = ["--host", host] if host is not None else []
             completed = _run_bounded_output(
-                [executable, "inspect", "--format={{.State.Running}}", asset.config["name"]],
+                [
+                    executable,
+                    *host_arguments,
+                    "inspect",
+                    "--format={{.State.Running}}",
+                    asset.config["name"],
+                ],
                 limit=16,
                 environment=environment,
             )

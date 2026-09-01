@@ -68,7 +68,7 @@ Supported asset kinds are:
 | `http` | GET and exact status | loopback HTTP or HTTPS; no credentials, query, redirects, proxy, or response body |
 | `tcp` | connection succeeds | loopback only |
 | `launchd` | exact user job is loaded or absent; optional exact last exit code | fixed `launchctl print` argv; bounded output is parsed then discarded |
-| `docker` | exact container running state | fixed `docker inspect` argv |
+| `docker` | exact container running state; optional explicit local `host` | fixed `docker inspect` argv; host accepts only an absolute Unix socket or loopback TCP endpoint |
 
 The automation SQLite form queries only the status of one exact ID:
 
