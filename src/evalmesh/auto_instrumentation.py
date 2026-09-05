@@ -191,7 +191,7 @@ def _exporter_class(endpoint: str, span_export_result: Any) -> type:
                 with opener.open(request, timeout=5) as response:
                     return (
                         span_export_result.SUCCESS
-                        if response.status == 204
+                        if 200 <= response.status < 300
                         else span_export_result.FAILURE
                     )
             except Exception:  # An exporter must never terminate the Agent.

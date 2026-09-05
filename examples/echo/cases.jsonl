@@ -1,2 +1,2 @@
-{"id":"hello","input":{"message":"hello"},"expected":{"echo-matches":"hello"},"tags":["smoke"]}
-{"id":"unicode","input":{"message":"你好"},"expected":{"echo-matches":"你好"},"tags":["smoke","unicode"]}
+{"id":"hello","input":{"message":"hello"},"expected":{"echo-matches":"hello"},"tags":["smoke"],"dimensions":{"task_type":"knowledge","risk_level":"normal"}}
+{"id":"unicode","input":{"message":"你好"},"expected":{"echo-matches":"你好"},"tags":["smoke","unicode"],"dimensions":{"task_type":"knowledge","risk_level":"critical"}}

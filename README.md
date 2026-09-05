@@ -13,6 +13,8 @@ leave the machine.
 
 - Command, HTTP, and non-interactive Codex targets.
 - Repeated cases for stability measurement.
+- Public batch summaries with pass@1, success@k, stable-pass@k, and P50/P95 latency.
+- Opaque variant identities, structured case dimensions, baseline comparison, and release gates.
 - Exact, contains, regex, process, latency, metric, and file-artifact graders.
 - Temporary copied workspaces for non-destructive Skill evaluation.
 - Transactional local JSONL history with private file permissions.
@@ -47,7 +49,18 @@ evalmesh monitor examples/inventory/inventory.example.json
 The default run stores only content-free metadata in `.evalmesh/runs.jsonl` and
 prints a summary. The synthetic echo example never calls a model or external API.
 
+Use `--summary-format json` with a non-console reporter to capture a versioned public
+summary for CI. Compare two summaries with `evalmesh compare BASELINE CANDIDATE`, then
+apply a versioned policy with `evalmesh gate CANDIDATE --baseline BASELINE --policy
+gate.toml`. See the [evaluation analytics guide](docs/evaluation-analytics.md).
+
 ## Manifest
+
+For multiple projects and Codex models, use `evalmesh init` to create a synthetic
+evaluation starter, then `evalmesh experiment plan|run|report` with a private
+project registry. Experiments support explicit model/reasoning settings, bounded
+concurrency, persistent attempt budgets, pinned workspaces, checkpoint resume, and
+within-project comparisons. See the [experiment guide](docs/experiments.md).
 
 ```toml
 schema_version = 1
@@ -56,6 +69,10 @@ suite_id = "smoke"
 case_files = ["cases.jsonl"]
 repetitions = 2
 pass_threshold = 1.0
+
+[variant]
+id = "candidate-001"
+model_id = "model-a"
 
 [target]
 kind = "command"
@@ -72,7 +89,7 @@ actual_path = "answer"
 Each JSONL case gives a case-specific expected value to graders that need one:
 
 ```json
-{"id":"case-001","input":{"question":"2 + 2"},"expected":{"answer_matches":4}}
+{"id":"case-001","input":{"question":"2 + 2"},"expected":{"answer_matches":4},"dimensions":{"task_type":"calculation","risk_level":"critical"}}
 ```
 
 Expected values are never sent to the target. Process targets run from a temporary
@@ -139,8 +156,9 @@ Default capture is `digest`, but content fingerprints are emitted only when
 low-entropy diary text and prompts can be guessed offline. Without a key it emits a
 random content ID instead.
 
-With a valid HMAC key, `suite_digest` is also a keyed digest of the full merged suite
-contract and cases. Without a key it is deliberately only a content-free structural
+With a valid HMAC key, `suite_digest` is a keyed digest of the cases and grading
+contract. Execution settings have a separate `variant.execution_id`; changing the
+model does not change the suite identity. Without a key the digests are only structural
 digest, so private low-entropy case changes are not fingerprinted.
 
 HMAC material, target-visible environment values, reporter credentials/endpoints,

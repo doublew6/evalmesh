@@ -31,6 +31,20 @@ _SENSITIVE_OTEL_KEY = re.compile(
     r"(?:account|api.?key|auth|authorization|cookie|credential|cwd|email|environment|env|home|password|path|secret|token)",
     re.IGNORECASE,
 )
+_PUBLIC_USAGE_ATTRIBUTES = frozenset(
+    {
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.cached_input_tokens",
+        "gen_ai.usage.output_tokens",
+        "gen_ai.usage.reasoning_output_tokens",
+        "gen_ai.usage.total_tokens",
+        "llm.token_count.prompt",
+        "llm.token_count.completion",
+        "llm.token_count.total",
+        "llm.token_count.prompt_details.cache_read",
+        "llm.token_count.prompt_details.cache_write",
+    }
+)
 _ALLOWED_KEYS = frozenset(
     {
         "schema_version",
@@ -46,6 +60,7 @@ _ALLOWED_KEYS = frozenset(
 )
 _MAX_CONFIG_BYTES = 64 * 1024
 _MAX_REQUEST_BYTES = 4 * 1024 * 1024
+_MAX_USAGE_COUNT = 1_000_000_000
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -184,6 +199,21 @@ def load_otel_gateway_config(path: str | Path) -> OtelGatewayConfig:
     )
 
 
+def _public_usage_value(attribute_name: str, value: Any) -> bool:
+    if attribute_name not in _PUBLIC_USAGE_ATTRIBUTES or type(value) is not dict:
+        return False
+    if set(value) != {"intValue"} or type(value["intValue"]) is not str:
+        return False
+    encoded = value["intValue"]
+    return bool(
+        encoded
+        and encoded.isascii()
+        and encoded.isdigit()
+        and len(encoded) <= 10
+        and int(encoded) <= _MAX_USAGE_COUNT
+    )
+
+
 def _redact_otel_attributes(value: Any, replacements: tuple[str, ...]) -> Any:
     safe = _sanitize_json(value, replacements=replacements)
 
@@ -194,6 +224,7 @@ def _redact_otel_attributes(value: Any, replacements: tuple[str, ...]) -> Any:
                 type(attribute_name) is str
                 and _SENSITIVE_OTEL_KEY.search(attribute_name)
                 and "value" in item
+                and not _public_usage_value(attribute_name, item["value"])
             ):
                 item["value"] = {"stringValue": "[REDACTED]"}
             for child in item.values():

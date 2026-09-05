@@ -39,6 +39,10 @@ class CodexAdapter:
         argv.append("--ephemeral")
         argv.extend(["--json", "--sandbox", self.target.sandbox])
         argv.append("--ignore-user-config")
+        if self.target.model is not None:
+            argv.extend(["--model", self.target.model])
+        if self.target.reasoning_effort is not None:
+            argv.extend(["-c", f'model_reasoning_effort="{self.target.reasoning_effort}"'])
         if self.target.ignore_rules:
             argv.append("--ignore-rules")
         # Copied workspaces intentionally exclude .git metadata.
@@ -52,7 +56,11 @@ class CodexAdapter:
             target=self.target,
             environment=self.environment,
         )
-        return self._parse_events(raw, self.target.output_mode)
+        return self._parse_events(
+            raw,
+            self.target.output_mode,
+            allow_empty_text=bool(self.target.artifact_paths),
+        )
 
     @staticmethod
     def _input_error(code: str) -> RawExecutionResult:
@@ -66,7 +74,9 @@ class CodexAdapter:
         )
 
     @staticmethod
-    def _parse_events(raw: RawExecutionResult, output_mode: str = "json") -> RawExecutionResult:
+    def _parse_events(
+        raw: RawExecutionResult, output_mode: str = "json", *, allow_empty_text: bool = False
+    ) -> RawExecutionResult:
         counts: Counter[str] = Counter()
         final_message = ""
         usage: dict[str, int] = {}
@@ -108,7 +118,10 @@ class CodexAdapter:
                             usage[name] = value
             elif event_type in {"turn.failed", "error"}:
                 errors.append("codex_turn_failed")
-        if not final_message:
+        # A successful file-producing turn need not contain a prose reply. The
+        # runner still verifies terminal events/errors and grades captured files.
+        empty_text_allowed = allow_empty_text and output_mode == "text"
+        if not final_message and not empty_text_allowed:
             errors.append("missing_codex_final_message")
         if completed_turns == 0:
             errors.append("missing_codex_turn_completed")
@@ -126,4 +139,8 @@ class CodexAdapter:
             error_codes=tuple(sorted(set(errors))),
             safe_metadata=frozen_mapping(metadata),
         )
-        return parse_target_output(result, output_mode) if final_message else result
+        return (
+            parse_target_output(result, output_mode)
+            if final_message or empty_text_allowed
+            else result
+        )

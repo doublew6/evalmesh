@@ -8,11 +8,13 @@ import hmac
 import math
 import os
 import re
+import shutil
 import stat
 import sys
 import tomllib
 import weakref
 from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import fields, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -87,9 +89,18 @@ _TOP_KEYS = {
     "case_files",
     "repetitions",
     "pass_threshold",
+    "variant",
     "target",
     "privacy",
     "graders",
+}
+_VARIANT_KEYS = {
+    "id",
+    "application_id",
+    "model_id",
+    "prompt_id",
+    "toolset_id",
+    "knowledge_id",
 }
 _TARGET_KEYS = {
     "kind",
@@ -116,6 +127,8 @@ _TARGET_KEYS = {
     "skip_git_repo_check",
     "prompt_field",
     "skill",
+    "model",
+    "reasoning_effort",
 }
 _PROCESS_TARGET_KEYS = {
     "kind",
@@ -152,6 +165,8 @@ _TARGET_KEYS_BY_KIND = {
         "skip_git_repo_check",
         "prompt_field",
         "skill",
+        "model",
+        "reasoning_effort",
     },
 }
 _PRIVACY_KEYS = {
@@ -177,7 +192,15 @@ _GRADER_FIELDS: dict[str, set[str]] = {
     "file_contains": {"path", "value", "case_sensitive"},
     "file_json_equals": {"path", "actual_path"},
 }
-_CASE_KEYS = {"id", "input", "expected", "grader_ids", "tags"}
+_CASE_KEYS = {"id", "input", "expected", "grader_ids", "tags", "dimensions"}
+_DIMENSION_KEYS = {
+    "task_type",
+    "risk_level",
+    "domain",
+    "source",
+    "difficulty",
+    "lifecycle",
+}
 _MAX_TOML_BYTES = 2_097_152
 _MAX_CASE_FILE_BYTES = 16_777_216
 _MAX_CASE_SUITE_BYTES = 67_108_864
@@ -292,9 +315,11 @@ def public_run_strings(manifest: Manifest, cases: tuple[EvalCase, ...]) -> tuple
         manifest.subject_id,
         manifest.suite_id,
         manifest.suite_digest,
+        *manifest.variant.values(),
         *(grader.id for grader in manifest.graders),
         *(case.id for case in cases),
         *(tag for case in cases for tag in case.tags),
+        *(value for case in cases for value in case.dimensions.values()),
     }
     values.update(
         metric
@@ -377,6 +402,10 @@ def target_delivery_strings(
         )
         if target.ignore_rules:
             yield "--ignore-rules"
+        if target.model is not None:
+            yield target.model
+        if target.reasoning_effort is not None:
+            yield f'model_reasoning_effort="{target.reasoning_effort}"'
     for case in cases:
         if target.kind in {"command", "http"}:
             yield case.id
@@ -422,6 +451,25 @@ def _identifier(value: Any, label: str) -> str:
     if not _IDENTIFIER.fullmatch(value):
         raise _fail(f"{label} must be an opaque identifier slug")
     return value
+
+
+def _identifier_mapping(
+    value: Any,
+    label: str,
+    allowed: set[str],
+    *,
+    require_id: bool = False,
+) -> Mapping[str, str]:
+    raw = _require_type(value, dict, label)
+    _strict_keys(raw, allowed, label)
+    if require_id and "id" not in raw:
+        raise _fail(f"{label}.id is required")
+    return frozen_mapping(
+        {
+            key: _identifier(item, f"{label}.{key}")
+            for key, item in sorted(raw.items())
+        }
+    )
 
 
 def _env_name(value: Any, label: str) -> str:
@@ -829,6 +877,19 @@ def _target(data: Any, private_policy: dict[str, Any]) -> TargetSpec:
     skill = data.get("skill")
     if skill is not None and (not isinstance(skill, str) or not _SKILL_NAME.fullmatch(skill)):
         raise _fail("target.skill must be a lowercase skill slug")
+    model = data.get("model")
+    if model is not None:
+        model = _identifier(model, "target.model")
+    reasoning_effort = data.get("reasoning_effort")
+    if reasoning_effort is not None and (
+        type(reasoning_effort) is not str
+        or reasoning_effort not in {
+            "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"
+        }
+    ):
+        raise _fail("target.reasoning_effort is invalid")
+    if reasoning_effort is not None and model is None:
+        raise _fail("target.reasoning_effort requires an explicit model")
 
     return TargetSpec(
         kind=kind,
@@ -855,6 +916,8 @@ def _target(data: Any, private_policy: dict[str, Any]) -> TargetSpec:
         skip_git_repo_check=bool_fields["skip_git_repo_check"],
         prompt_field=prompt_field,
         skill=skill,
+        model=model,
+        reasoning_effort=reasoning_effort,
     )
 
 
@@ -1004,7 +1067,10 @@ def _graders(data: Any, target: TargetSpec) -> tuple[GraderSpec, ...]:
 
 
 def _load_suite(
-    path: str | Path, private_policy: str | Path | None = None
+    path: str | Path, private_policy: str | Path | None = None,
+    *, model: str | None = None, reasoning_effort: str | None = None,
+    variant_id: str | None = None, repetitions: int | None = None,
+    private_files: tuple[Path, ...] = (), pin_workspace: bool = False,
 ) -> tuple[Manifest, tuple[EvalCase, ...]]:
     try:
         manifest_path = Path(path).expanduser()
@@ -1047,12 +1113,30 @@ def _load_suite(
         policy_identity = None
     policy = _load_private_policy(policy_path, policy_identity)
     merged = _deep_merge(base, policy)
+    if model is not None or reasoning_effort is not None:
+        if not isinstance(merged.get("target"), dict) or merged["target"].get("kind") != "codex":
+            raise _fail("model overrides require a codex target")
+        merged["target"] = dict(merged["target"])
+        if model is not None:
+            merged["target"]["model"] = model
+        if reasoning_effort is not None:
+            merged["target"]["reasoning_effort"] = reasoning_effort
+    if variant_id is not None:
+        merged["variant"] = {**merged.get("variant", {}), "id": variant_id}
+    if repetitions is not None:
+        merged["repetitions"] = repetitions
 
     schema_version = _require_type(merged.get("schema_version"), int, "schema_version")
     if schema_version != 1:
         raise _fail("schema_version must be 1")
     subject_id = _identifier(merged.get("subject_id"), "subject_id")
     suite_id = _identifier(merged.get("suite_id"), "suite_id")
+    variant = _identifier_mapping(
+        merged.get("variant", {"id": "default"}),
+        "variant",
+        _VARIANT_KEYS,
+        require_id=True,
+    )
     case_files_raw = _require_type(merged.get("case_files"), list, "case_files")
     if not case_files_raw:
         raise _fail("case_files must not be empty")
@@ -1092,13 +1176,12 @@ def _load_suite(
     cases, case_path_identities = _load_cases(source_dir, case_files, grader_by_id)
 
     structural_contract = {
-        "schema_version": 1,
+        "digest_contract": "evalmesh.suite.v2",
         "subject_id": subject_id,
         "suite_id": suite_id,
         "case_file_count": len(case_files),
         "repetitions": repetitions,
         "pass_threshold": pass_threshold,
-        "target_kind": target.kind,
         "grader_contracts": [
             {
                 "id": grader.id,
@@ -1116,6 +1199,7 @@ def _load_suite(
                 "grader_ids": list(case.grader_ids) if case.grader_ids is not None else None,
                 "expected_grader_ids": sorted(case.expected),
                 "tags": list(case.tags),
+                "dimensions": dict(case.dimensions),
             }
             for case in cases
         ],
@@ -1154,8 +1238,15 @@ def _load_suite(
     ):
         raise _fail("privacy HMAC key material cannot be delivered to a target")
     if digest_material:
+        private_manifest = {
+            key: merged[key] for key in (
+                "schema_version", "subject_id", "suite_id", "graders"
+            )
+        }
+        private_manifest.update(repetitions=repetitions, pass_threshold=pass_threshold)
         private_contract = {
-            "manifest": _json_value(merged, "manifest"),
+            "digest_contract": "evalmesh.suite.v2",
+            "manifest": _json_value(private_manifest, "manifest"),
             "cases": [
                 {
                     "id": case.id,
@@ -1163,6 +1254,7 @@ def _load_suite(
                     "expected": dict(case.expected),
                     "grader_ids": list(case.grader_ids) if case.grader_ids is not None else None,
                     "tags": list(case.tags),
+                    "dimensions": dict(case.dimensions),
                 }
                 for case in cases
             ],
@@ -1174,6 +1266,17 @@ def _load_suite(
         ).hexdigest()
     else:
         suite_digest = sha256_hex(canonical_json_bytes(structural_contract))
+    extra_identities = []
+    if type(private_files) is not tuple or len(private_files) > 1024:
+        raise _fail("additional private files exceed the limit")
+    for extra_path in private_files:
+        extra_path = Path(extra_path)
+        descriptor = _open_bounded_regular_file(extra_path, "additional private file", None)
+        try:
+            extra_stat = os.fstat(descriptor)
+            extra_identities.append((extra_path, (extra_stat.st_dev, extra_stat.st_ino)))
+        finally:
+            os.close(descriptor)
     manifest = Manifest(
         schema_version=1,
         subject_id=subject_id,
@@ -1187,20 +1290,73 @@ def _load_suite(
         source_dir=source_dir,
         manifest_path=manifest_path,
         suite_digest=suite_digest,
+        variant=variant,
         hmac_key=digest_material,
         private_path_identities=(
             (manifest_path, manifest_identity),
             *((policy_path, policy_identity) for _ in (0,) if policy_path and policy_identity),
             *case_path_identities,
+            *extra_identities,
         ),
         private_file_identities=frozenset(
             {
                 manifest_identity,
                 *(identity for _path, identity in case_path_identities),
                 *((policy_identity,) if policy_identity is not None else ()),
+                *(identity for _path, identity in extra_identities),
             }
         ),
     )
+    if pin_workspace:
+        if target.kind != "codex":
+            raise _fail("pinned experiments require a codex target")
+        if digest_material is None:
+            raise _fail("pinned experiments require a persistent privacy HMAC key")
+        # Import here because Workspace uses the secure file-reading helpers above.
+        from .workspace import Workspace, workspace_fingerprint
+
+        executable_path = shutil.which(target.executable, path=target_environment.get("PATH", ""))
+        if executable_path is None:
+            raise _fail("pinned experiment executable is unavailable")
+        runtime = os.stat(executable_path)
+        manifest = replace(
+            manifest, pinned_environment=frozen_mapping(target_environment),
+            runtime_identity=(
+                executable_path, runtime.st_dev, runtime.st_ino,
+                runtime.st_mtime_ns, runtime.st_size,
+            ),
+        )
+        with Workspace(
+            manifest, target_environment, protected_secret_keys=(digest_material,)
+        ) as root:
+            manifest = replace(
+                manifest, workspace_digest=workspace_fingerprint(root, digest_material)
+            )
+    execution_contract = {
+        "contract": "evalmesh.execution.v1",
+        "target": {item.name: getattr(target, item.name) for item in fields(target)},
+        "environment": target_environment,
+        "workspace_digest": manifest.workspace_digest,
+        "runtime_identity": manifest.runtime_identity,
+        "python_version": tuple(sys.version_info[:3]),
+        "variant": dict(variant),
+    }
+    if digest_material:
+        execution_id = hmac.new(
+            digest_material, canonical_json_bytes(plain_json(execution_contract)), hashlib.sha256
+        ).hexdigest()
+    else:
+        execution_id = sha256_hex(canonical_json_bytes({
+            "contract": "evalmesh.execution.structural.v1", "kind": target.kind,
+            "model": target.model, "reasoning_effort": target.reasoning_effort,
+            "variant": dict(variant),
+        }))
+    public_variant = {**variant, "execution_id": execution_id}
+    if target.model is not None:
+        public_variant["model_id"] = target.model
+    if target.reasoning_effort is not None:
+        public_variant["reasoning_effort"] = target.reasoning_effort
+    manifest = replace(manifest, variant=frozen_mapping(public_variant))
     if secret_material_conflicts(
         digest_material,
         public_run_strings(manifest, cases),
@@ -1212,13 +1368,20 @@ def _load_suite(
 
 
 def load_suite(
-    path: str | Path, private_policy: str | Path | None = None
+    path: str | Path, private_policy: str | Path | None = None,
+    *, model: str | None = None, reasoning_effort: str | None = None,
+    variant_id: str | None = None, repetitions: int | None = None,
+    private_files: tuple[Path, ...] = (), pin_workspace: bool = False,
 ) -> tuple[Manifest, tuple[EvalCase, ...]]:
     """Load a suite while discarding sensitive parser/path exception objects."""
 
     message: str | None = None
     try:
-        return _load_suite(path, private_policy)
+        return _load_suite(
+            path, private_policy, model=model, reasoning_effort=reasoning_effort,
+            variant_id=variant_id, repetitions=repetitions, private_files=private_files,
+            pin_workspace=pin_workspace,
+        )
     except ConfigurationError as error:
         message = str(error)
     except Exception:
@@ -1333,6 +1496,11 @@ def _load_cases(
             )
             if len(set(tags)) != len(tags):
                 raise _fail(f"{label}.tags contains duplicates")
+            dimensions = _identifier_mapping(
+                raw.get("dimensions", {}),
+                f"{label}.dimensions",
+                _DIMENSION_KEYS,
+            )
             result.append(
                 EvalCase(
                     id=case_id,
@@ -1342,6 +1510,7 @@ def _load_cases(
                     ),
                     grader_ids=selected,
                     tags=tags,
+                    dimensions=dimensions,
                 )
             )
     if not result:

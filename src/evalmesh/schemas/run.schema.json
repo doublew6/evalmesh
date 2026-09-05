@@ -5,8 +5,8 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "run_id", "subject_id", "suite_id", "suite_digest",
-    "case_id", "attempt", "tags", "target_kind", "started_at", "completed_at",
+    "schema_version", "run_id", "batch_id", "subject_id", "suite_id", "suite_digest",
+    "case_id", "attempt", "tags", "variant", "dimensions", "target_kind", "started_at", "completed_at",
     "duration_ms", "status", "passed", "aggregate_score", "capture",
     "policy_version", "redaction_version", "case_input", "case_expected",
     "execution", "scores"
@@ -14,12 +14,40 @@
   "properties": {
     "schema_version": {"const": "evalmesh.run.v1"},
     "run_id": {"type": "string", "format": "uuid"},
+    "batch_id": {"type": "string", "format": "uuid"},
     "subject_id": {"$ref": "#/$defs/id"},
     "suite_id": {"$ref": "#/$defs/id"},
     "suite_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "case_id": {"$ref": "#/$defs/id"},
     "attempt": {"type": "integer", "minimum": 1, "maximum": 100},
     "tags": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "application_id": {"$ref": "#/$defs/id"},
+        "model_id": {"$ref": "#/$defs/id"},
+        "execution_id": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "reasoning_effort": {"$ref": "#/$defs/id"},
+        "prompt_id": {"$ref": "#/$defs/id"},
+        "toolset_id": {"$ref": "#/$defs/id"},
+        "knowledge_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "task_type": {"$ref": "#/$defs/id"},
+        "risk_level": {"$ref": "#/$defs/id"},
+        "domain": {"$ref": "#/$defs/id"},
+        "source": {"$ref": "#/$defs/id"},
+        "difficulty": {"$ref": "#/$defs/id"},
+        "lifecycle": {"$ref": "#/$defs/id"}
+      }
+    },
     "target_kind": {"enum": ["command", "http", "codex"]},
     "started_at": {"type": "string", "format": "date-time"},
     "completed_at": {"type": "string", "format": "date-time"},

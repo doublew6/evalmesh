@@ -18,6 +18,7 @@
     },
     "repetitions": {"type": "integer", "minimum": 1, "maximum": 100, "default": 1},
     "pass_threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 1},
+    "variant": {"$ref": "#/$defs/variant"},
     "target": {"$ref": "#/$defs/target"},
     "privacy": {"$ref": "#/$defs/privacy"},
     "graders": {
@@ -36,6 +37,19 @@
         {"not": {"enum": ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "TMPDIR", "TMP", "TEMP", "PYTHONHOME", "PYTHONPATH", "PYTHONNOUSERSITE", "CODEX_HOME", "EVALMESH_HMAC_KEY"]}},
         {"not": {"pattern": "^(?:EVALMESH_OPIK_|OPIK_|OTEL_)"}}
       ]
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "application_id": {"$ref": "#/$defs/id"},
+        "model_id": {"$ref": "#/$defs/id"},
+        "prompt_id": {"$ref": "#/$defs/id"},
+        "toolset_id": {"$ref": "#/$defs/id"},
+        "knowledge_id": {"$ref": "#/$defs/id"}
+      }
     },
     "relativePath": {
       "type": "string",
@@ -94,6 +108,8 @@
           "additionalProperties": {"$ref": "#/$defs/targetEnv"}
         },
         "executable": {"type": "string", "minLength": 1, "pattern": "^[^/\\\\]+$", "default": "codex"},
+        "model": {"$ref": "#/$defs/id"},
+        "reasoning_effort": {"enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]},
         "sandbox": {"enum": ["read-only", "workspace-write"], "default": "read-only"},
         "ephemeral": {"const": true, "default": true},
         "ignore_user_config": {"const": true, "default": true},
@@ -103,6 +119,9 @@
         "skill": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"}
       },
       "allOf": [
+        {"if": {"required": ["reasoning_effort"]}, "then": {"required": ["model"]}},
+        {"if": {"properties": {"kind": {"enum": ["command", "http"]}}, "required": ["kind"]},
+         "then": {"not": {"anyOf": [{"required": ["model"]}, {"required": ["reasoning_effort"]}]}}},
         {
           "not": {"required": ["workspace_path", "workspace_path_env"]}
         },

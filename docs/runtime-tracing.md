@@ -45,21 +45,49 @@ content is bounded before persistence or delivery.
 
 ## Framework-neutral Python hook
 
-Use one root context around the Agent run and one span around the shared model/tool
-dispatch points:
+Use one root context around the Agent run. Shared model and tool dispatchers can use
+context-local helpers, so every call is attached to the correct run without threading
+the tracer object through application code. The context is safe for sibling asyncio
+tasks:
 
 ```python
-from evalmesh import RuntimeTracer
+from evalmesh import RuntimeTracer, llm_span, tool_span
 
 with RuntimeTracer(policy_path, name="agent.run", prompt=runtime_prompt) as trace:
-    with trace.span("lookup", type="tool", input=runtime_tool_input) as span:
+    with tool_span("lookup", input=runtime_tool_input) as span:
         result = call_tool(runtime_tool_input)
         span.set_output(result)
+    with llm_span(
+        "compose",
+        input=runtime_model_input,
+        model="model-a",
+        provider="provider-a",
+    ) as span:
+        answer, usage = call_model(runtime_model_input)
+        span.set_output(answer)
+        span.set_usage(usage)
     trace.set_output(runtime_answer)
 ```
 
-For an LLM span, set `type="llm"`, and optionally pass opaque `model` and `provider`
-identifiers. `span.set_usage()` attaches numeric usage and cost fields.
+`tool_span()` and `llm_span()` deliberately fail when there is no active
+`RuntimeTracer`. This makes a missing task-entry hook visible during integration tests
+instead of silently dropping tool activity. `span.set_usage()` attaches numeric usage
+and cost fields. Usage accepts non-negative integer `input_tokens`,
+`cached_input_tokens`, `output_tokens`, `reasoning_output_tokens`, and `total_tokens`
+values up to one billion; other fields fail closed. Use only opaque `model`,
+`provider`, metadata, and tag identifiers.
+
+For every Agent project, instrument exactly two boundaries:
+
+1. The real task entry creates one `RuntimeTracer`, supplies the runtime prompt, and
+   calls `trace.set_output()` with the final response.
+2. The shared tool/model dispatcher wraps every invocation in `tool_span()` or
+   `llm_span()`, records the returned value, and lets exceptions close the span with
+   `metadata.status = "error"`.
+
+A production smoke run is observable only when its Opik root Trace has non-empty
+`Input` and `Output`, at least one LLM span for a model-backed Agent, and tool spans
+whenever tools were invoked. Health-monitoring traces do not satisfy this contract.
 
 ## Language-neutral ingestion
 

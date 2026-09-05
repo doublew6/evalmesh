@@ -13,6 +13,7 @@ import re
 import stat
 import sys
 from contextlib import AbstractContextManager
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -92,6 +93,24 @@ _MAX_EVENT_BYTES = 2 * 1024 * 1024
 _MAX_STRING_BYTES = 32 * 1024
 _MAX_ITEMS = 512
 _MAX_DEPTH = 32
+_MAX_USAGE_COUNT = 1_000_000_000
+_USAGE_KEYS = frozenset(
+    {
+        "input_tokens",
+        "cached_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+        "total_tokens",
+    }
+)
+
+
+# Context-local state lets a shared tool dispatcher attach spans without taking a
+# tracer argument through every call. ContextVar propagation also keeps sibling
+# asyncio tasks from corrupting one another's parent-span stacks.
+_CURRENT_RUNTIME_TRACER: ContextVar[Any] = ContextVar(
+    "evalmesh_current_runtime_tracer", default=None
+)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -346,6 +365,17 @@ def _tags(value: Any) -> list[str]:
     return result
 
 
+def _usage(value: Any) -> dict[str, int]:
+    if type(value) is not dict or len(value) > len(_USAGE_KEYS) or set(value) - _USAGE_KEYS:
+        raise ConfigurationError("runtime trace span usage is invalid")
+    result: dict[str, int] = {}
+    for key, count in value.items():
+        if type(count) is not int or not 0 <= count <= _MAX_USAGE_COUNT:
+            raise ConfigurationError("runtime trace span usage is invalid")
+        result[key] = count
+    return dict(sorted(result.items()))
+
+
 def project_runtime_trace(config: RuntimeTraceConfig, event: Any) -> dict[str, Any]:
     if type(event) is not dict or set(event) - _ALLOWED_EVENT_KEYS:
         raise ConfigurationError("runtime trace event has invalid fields")
@@ -429,10 +459,7 @@ def project_runtime_trace(config: RuntimeTraceConfig, event: Any) -> dict[str, A
             if key in raw_span:
                 safe_span[key] = _slug(raw_span[key], f"span {key}")
         if "usage" in raw_span:
-            usage = _sanitize_json(raw_span["usage"], replacements=replacements)
-            if type(usage) is not dict:
-                raise ConfigurationError("runtime trace span usage must be an object")
-            safe_span["usage"] = usage
+            safe_span["usage"] = _usage(raw_span["usage"])
         if "total_cost" in raw_span:
             cost = raw_span["total_cost"]
             if type(cost) not in {int, float} or cost < 0:
@@ -530,21 +557,26 @@ class _SpanContext(AbstractContextManager["_SpanContext"]):
         self._tracer = tracer
         self._record: dict[str, Any] = {
             "id": uuid4().hex,
-            "parent_id": tracer._stack[-1]["id"] if tracer._stack else None,
+            "parent_id": None,
             "name": name,
             "type": span_type,
             "started_at": datetime.now(UTC).isoformat(),
             "input": input_value,
             "metadata": metadata or {},
         }
+        self._stack_token: Token[tuple[dict[str, Any], ...]] | None = None
         if model is not None:
             self._record["model"] = model
         if provider is not None:
             self._record["provider"] = provider
 
     def __enter__(self) -> _SpanContext:
-        self._tracer._stack.append(self._record)
+        if self._stack_token is not None:
+            raise RuntimeError("runtime trace spans cannot be entered more than once")
+        stack = self._tracer._span_stack.get()
+        self._record["parent_id"] = stack[-1]["id"] if stack else None
         self._tracer._spans.append(self._record)
+        self._stack_token = self._tracer._span_stack.set((*stack, self._record))
         return self
 
     def set_output(self, value: Any) -> None:
@@ -556,12 +588,16 @@ class _SpanContext(AbstractContextManager["_SpanContext"]):
             self._record["total_cost"] = total_cost
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
-        if not self._tracer._stack or self._tracer._stack[-1] is not self._record:
+        stack = self._tracer._span_stack.get()
+        if self._stack_token is None or not stack or stack[-1] is not self._record:
             raise RuntimeError("runtime trace spans must close in stack order")
-        self._tracer._stack.pop()
         self._record["completed_at"] = datetime.now(UTC).isoformat()
-        if exc_type is not None:
-            self._record["metadata"] = {**self._record["metadata"], "status": "error"}
+        self._record["metadata"] = {
+            **self._record["metadata"],
+            "status": "error" if exc_type is not None else "ok",
+        }
+        self._tracer._span_stack.reset(self._stack_token)
+        self._stack_token = None
         return False
 
 
@@ -582,16 +618,29 @@ class RuntimeTracer(AbstractContextManager["RuntimeTracer"]):
         self._prompt = prompt
         self._metadata = metadata or {}
         self._tags = tags or []
+        self._trace_id = uuid4().hex
         self._started_at: str | None = None
         self._output: Any = None
         self._output_set = False
         self._spans: list[dict[str, Any]] = []
-        self._stack: list[dict[str, Any]] = []
+        self._span_stack: ContextVar[tuple[dict[str, Any], ...]] = ContextVar(
+            f"evalmesh_runtime_span_stack_{self._trace_id}", default=()
+        )
+        self._active_token: Token[Any] | None = None
         self.receipt: RuntimeTraceReceipt | None = None
 
     def __enter__(self) -> RuntimeTracer:
+        if self._started_at is not None or self._active_token is not None:
+            raise RuntimeError("runtime tracer cannot be entered more than once")
         self._started_at = datetime.now(UTC).isoformat()
+        self._active_token = _CURRENT_RUNTIME_TRACER.set(self)
         return self
+
+    @property
+    def trace_id(self) -> str:
+        """Opaque identifier available to logs and downstream correlation."""
+
+        return self._trace_id
 
     def span(
         self,
@@ -620,27 +669,96 @@ class RuntimeTracer(AbstractContextManager["RuntimeTracer"]):
         self._output_set = True
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
-        if self._started_at is None or self._stack:
-            raise RuntimeError("runtime tracer or one of its spans was not closed correctly")
-        event: dict[str, Any] = {
-            "protocol": "evalmesh.runtime-trace.v1",
-            "name": self._name,
-            "started_at": self._started_at,
-            "completed_at": datetime.now(UTC).isoformat(),
-            "prompt": self._prompt,
-            "metadata": {
-                **self._metadata,
-                "status": "error" if exc_type is not None else "ok",
-            },
-            "tags": self._tags,
-            "spans": self._spans,
-        }
-        if self._output_set:
-            event["output"] = self._output
-        self.receipt = submit_runtime_trace(self._config_path, event)
-        if exc_type is None and not self.receipt.delivered:
-            raise ReporterError("runtime trace could not be delivered after local storage")
+        if self._started_at is None or self._active_token is None:
+            raise RuntimeError("runtime tracer was not entered correctly")
+        try:
+            if self._span_stack.get():
+                raise RuntimeError("runtime tracer or one of its spans was not closed correctly")
+            event: dict[str, Any] = {
+                "protocol": "evalmesh.runtime-trace.v1",
+                "trace_id": self._trace_id,
+                "name": self._name,
+                "started_at": self._started_at,
+                "completed_at": datetime.now(UTC).isoformat(),
+                "prompt": self._prompt,
+                "metadata": {
+                    **self._metadata,
+                    "status": "error" if exc_type is not None else "ok",
+                },
+                "tags": self._tags,
+                "spans": self._spans,
+            }
+            if self._output_set:
+                event["output"] = self._output
+            self.receipt = submit_runtime_trace(self._config_path, event)
+            if exc_type is None and not self.receipt.delivered:
+                raise ReporterError("runtime trace could not be delivered after local storage")
+        finally:
+            _CURRENT_RUNTIME_TRACER.reset(self._active_token)
+            self._active_token = None
         return False
+
+
+def current_runtime_tracer() -> RuntimeTracer | None:
+    """Return the tracer for the current synchronous or asyncio execution context."""
+
+    tracer = _CURRENT_RUNTIME_TRACER.get()
+    return tracer if type(tracer) is RuntimeTracer else None
+
+
+def runtime_span(
+    name: str,
+    *,
+    type: Literal["general", "tool", "llm", "guardrail"] = "general",
+    input: Any = None,
+    metadata: dict[str, Any] | None = None,
+    model: str | None = None,
+    provider: str | None = None,
+) -> _SpanContext:
+    """Attach a span to the active Agent run from a shared dispatcher."""
+
+    tracer = current_runtime_tracer()
+    if tracer is None:
+        raise RuntimeError("runtime span requires an active RuntimeTracer")
+    return tracer.span(
+        name,
+        type=type,
+        input=input,
+        metadata=metadata,
+        model=model,
+        provider=provider,
+    )
+
+
+def tool_span(
+    name: str,
+    *,
+    input: Any = None,
+    metadata: dict[str, Any] | None = None,
+) -> _SpanContext:
+    """Attach one tool invocation to the active Agent run."""
+
+    return runtime_span(name, type="tool", input=input, metadata=metadata)
+
+
+def llm_span(
+    name: str,
+    *,
+    input: Any = None,
+    metadata: dict[str, Any] | None = None,
+    model: str | None = None,
+    provider: str | None = None,
+) -> _SpanContext:
+    """Attach one model invocation to the active Agent run."""
+
+    return runtime_span(
+        name,
+        type="llm",
+        input=input,
+        metadata=metadata,
+        model=model,
+        provider=provider,
+    )
 
 
 def parse_runtime_event(data: bytes) -> Any:

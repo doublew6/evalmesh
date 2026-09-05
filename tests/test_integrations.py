@@ -387,6 +387,22 @@ class IntegrationTests(unittest.TestCase):
         )
         self.assertIn("missing_codex_turn_completed", parsed.error_codes)
 
+    def test_codex_file_only_mode_does_not_relax_json_or_terminal_requirements(self) -> None:
+        from evalmesh.adapters.codex import CodexAdapter
+
+        raw = RawExecutionResult(
+            output=None,
+            stdout='{"type":"turn.completed"}',
+            stderr="",
+            exit_code=0,
+            duration_ms=1,
+        )
+        parsed = CodexAdapter._parse_events(raw, "json", allow_empty_text=True)
+        self.assertIn("missing_codex_final_message", parsed.error_codes)
+        raw = RawExecutionResult(output=None, stdout="", stderr="", exit_code=0, duration_ms=1)
+        parsed = CodexAdapter._parse_events(raw, "text", allow_empty_text=True)
+        self.assertIn("missing_codex_turn_completed", parsed.error_codes)
+
     def test_opik_reporter_maps_only_projected_run_and_tracks_flush_failure(self) -> None:
         manifest, cases = load_suite("examples/echo/evalmesh.toml")
         recording = RecordingReporter()

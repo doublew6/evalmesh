@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from evalmesh.auto_instrumentation import (
+    _exporter_class,
     _validate_route,
     install_from_environment,
     spans_to_otlp_json,
@@ -56,6 +57,36 @@ class AutoInstrumentationTests(unittest.TestCase):
                 self.assertRaises(ConfigurationError),
             ):
                 _validate_route(project, endpoint)
+
+    def test_loopback_exporter_accepts_successful_http_statuses(self) -> None:
+        class Response:
+            def __init__(self, status: int) -> None:
+                self.status = status
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+        results = SimpleNamespace(SUCCESS="success", FAILURE="failure")
+        for status, expected in ((200, "success"), (204, "success"), (400, "failure")):
+            opener = SimpleNamespace(
+                open=lambda *_args, _status=status, **_kwargs: Response(_status)
+            )
+            with (
+                self.subTest(status=status),
+                patch(
+                    "evalmesh.auto_instrumentation.urllib.request.build_opener",
+                    return_value=opener,
+                ),
+                patch(
+                    "evalmesh.auto_instrumentation.importlib.import_module",
+                    return_value=SimpleNamespace(SpanExporter=object),
+                ),
+            ):
+                exporter = _exporter_class("http://127.0.0.1:14318", results)()
+                self.assertEqual(exporter.export(()), expected)
 
     def test_environment_bootstrap_is_opt_in_and_failure_safe(self) -> None:
         with patch.dict(os.environ, {}, clear=True):

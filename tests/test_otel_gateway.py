@@ -84,6 +84,53 @@ class OtelGatewayTests(unittest.TestCase):
         self.assertEqual(attributes[1]["value"]["stringValue"], "[REDACTED]")
         self.assertNotIn("synthetic-private-token", json.dumps(projected))
 
+    def test_otlp_projection_preserves_only_known_bounded_token_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            config = load_otel_gateway_config(self._config(root))
+            payload = self._payload()
+            attributes = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0][
+                "attributes"
+            ]
+            attributes.extend(
+                [
+                    {
+                        "key": "gen_ai.usage.input_tokens",
+                        "value": {"intValue": "3"},
+                    },
+                    {
+                        "key": "llm.token_count.completion",
+                        "value": {"intValue": "2"},
+                    },
+                    {
+                        "key": "gen_ai.usage.output_tokens",
+                        "value": {"stringValue": "synthetic-private-token"},
+                    },
+                    {
+                        "key": "gen_ai.usage.total_tokens",
+                        "value": {"intValue": "1000000001"},
+                    },
+                    {
+                        "key": "authorization.token",
+                        "value": {"intValue": "4"},
+                    },
+                ]
+            )
+            projected = sanitize_otlp_payload(config, payload)
+        projected_attributes = projected["resourceSpans"][0]["scopeSpans"][0]["spans"][
+            0
+        ]["attributes"]
+        by_name = {item["key"]: item["value"] for item in projected_attributes}
+        self.assertEqual(by_name["gen_ai.usage.input_tokens"], {"intValue": "3"})
+        self.assertEqual(by_name["llm.token_count.completion"], {"intValue": "2"})
+        self.assertEqual(
+            by_name["gen_ai.usage.output_tokens"], {"stringValue": "[REDACTED]"}
+        )
+        self.assertEqual(
+            by_name["gen_ai.usage.total_tokens"], {"stringValue": "[REDACTED]"}
+        )
+        self.assertEqual(by_name["authorization.token"], {"stringValue": "[REDACTED]"})
+
     def test_application_is_local_first_and_routes_one_project(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)

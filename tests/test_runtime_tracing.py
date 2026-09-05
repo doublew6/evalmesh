@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import io
 import json
@@ -15,9 +16,12 @@ from evalmesh.errors import ConfigurationError
 from evalmesh.runtime_tracing import (
     RuntimeTracer,
     RuntimeTraceReceipt,
+    current_runtime_tracer,
+    llm_span,
     load_runtime_trace_config,
     project_runtime_trace,
     submit_runtime_trace,
+    tool_span,
 )
 
 
@@ -117,6 +121,34 @@ class RuntimeTracingTests(unittest.TestCase):
         self.assertNotIn("should-not-appear", serialized)
         self.assertNotIn('"PRIVATE"', serialized)
 
+    def test_projection_preserves_bounded_token_usage_and_rejects_other_values(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            config = load_runtime_trace_config(self._config(root))
+            event = self._event()
+            event["spans"][0]["type"] = "llm"
+            event["spans"][0]["usage"] = {
+                "input_tokens": 3,
+                "cached_input_tokens": 1,
+                "output_tokens": 2,
+                "reasoning_output_tokens": 1,
+                "total_tokens": 5,
+            }
+            projected = project_runtime_trace(config, event)
+            self.assertEqual(projected["spans"][0]["usage"], event["spans"][0]["usage"])
+
+            event["spans"][0]["usage"] = {"input_tokens": "synthetic-private-token"}
+            with self.assertRaisesRegex(ConfigurationError, "span usage"):
+                project_runtime_trace(config, event)
+
+            event["spans"][0]["usage"] = {"access_token": 3}
+            with self.assertRaisesRegex(ConfigurationError, "span usage"):
+                project_runtime_trace(config, event)
+
+            event["spans"][0]["usage"] = {"input_tokens": 1_000_000_001}
+            with self.assertRaisesRegex(ConfigurationError, "span usage"):
+                project_runtime_trace(config, event)
+
     def test_submit_is_local_first_and_writes_mode_0600(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
@@ -171,6 +203,77 @@ class RuntimeTracingTests(unittest.TestCase):
         spans = captured[0]["spans"]
         self.assertEqual([item["name"] for item in spans], ["plan", "lookup"])
         self.assertEqual(spans[1]["parent_id"], spans[0]["id"])
+        self.assertEqual(captured[0]["trace_id"], trace.trace_id)
+        self.assertEqual(spans[0]["metadata"]["status"], "ok")
+        self.assertEqual(spans[1]["metadata"]["status"], "ok")
+
+    def test_shared_dispatcher_helpers_require_and_use_active_trace(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "active RuntimeTracer"):
+            tool_span("lookup", input={})
+
+        captured: list[dict[str, object]] = []
+
+        def submit(_path: object, event: dict[str, object]) -> RuntimeTraceReceipt:
+            captured.append(event)
+            return RuntimeTraceReceipt(True, True, external_id="trace-remote-004")
+
+        with (
+            patch("evalmesh.runtime_tracing.submit_runtime_trace", side_effect=submit),
+            RuntimeTracer(
+                "/private/synthetic/trace.private.json",
+                name="agent.run",
+                prompt="Synthetic prompt",
+            ) as trace,
+        ):
+            self.assertIs(current_runtime_tracer(), trace)
+            with tool_span("lookup", input={"query": "synthetic"}) as tool:
+                tool.set_output({"matches": 1})
+            with llm_span(
+                "compose",
+                input={"facts": 1},
+                model="model-a",
+                provider="provider-a",
+            ) as model:
+                model.set_output("Synthetic answer")
+                model.set_usage({"input_tokens": 3, "output_tokens": 2})
+            trace.set_output("Synthetic answer")
+
+        self.assertIsNone(current_runtime_tracer())
+        spans = captured[0]["spans"]
+        self.assertEqual([item["type"] for item in spans], ["tool", "llm"])
+        self.assertEqual(spans[0]["output"], {"matches": 1})
+        self.assertEqual(spans[1]["usage"], {"input_tokens": 3, "output_tokens": 2})
+
+    def test_context_local_span_stacks_preserve_parallel_tool_parents(self) -> None:
+        captured: list[dict[str, object]] = []
+
+        def submit(_path: object, event: dict[str, object]) -> RuntimeTraceReceipt:
+            captured.append(event)
+            return RuntimeTraceReceipt(True, True, external_id="trace-remote-005")
+
+        async def run_parallel_tools() -> None:
+            async def invoke(name: str) -> None:
+                with tool_span(name, input={"name": name}) as span:
+                    await asyncio.sleep(0)
+                    span.set_output({"ok": True})
+
+            with RuntimeTracer(
+                "/private/synthetic/trace.private.json",
+                name="agent.run",
+                prompt="Synthetic prompt",
+            ) as trace:
+                with trace.span("dispatch", input={}):
+                    await asyncio.gather(invoke("tool-a"), invoke("tool-b"))
+                trace.set_output("Synthetic answer")
+
+        with patch("evalmesh.runtime_tracing.submit_runtime_trace", side_effect=submit):
+            asyncio.run(run_parallel_tools())
+
+        spans = captured[0]["spans"]
+        parent = next(item for item in spans if item["name"] == "dispatch")
+        children = [item for item in spans if item["name"] in {"tool-a", "tool-b"}]
+        self.assertEqual(len(children), 2)
+        self.assertTrue(all(item["parent_id"] == parent["id"] for item in children))
 
     def test_cli_ingest_reads_content_from_stdin_not_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as name:

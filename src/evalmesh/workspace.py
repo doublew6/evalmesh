@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import stat
 import sys
@@ -11,6 +13,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+from .canonical import canonical_json_bytes
 from .errors import ConfigurationError
 from .file_policy import SENSITIVE_DIRECTORY_NAMES, is_sensitive_copy_entry
 from .manifest import _open_bounded_regular_file, hmac_secret_markers
@@ -19,6 +22,25 @@ from .models import Manifest, RawArtifact
 _MAX_COPY_ENTRIES = 20_000
 _MAX_COPY_BYTES = 268_435_456
 _MAX_ARTIFACT_CAPTURE_BYTES = 67_108_864
+
+
+def workspace_fingerprint(root: Path, key: bytes) -> str:
+    """Fingerprint a bounded, freshly copied fixture without publishing file names."""
+    digest = hmac.new(key, b"evalmesh.workspace.v1\n", hashlib.sha256)
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise ConfigurationError("workspace fingerprint rejects symbolic links")
+        relative = path.relative_to(root).as_posix()
+        info = path.stat()
+        digest.update(canonical_json_bytes([
+            relative, stat.S_IMODE(info.st_mode), info.st_size if path.is_file() else None,
+        ]))
+        if path.is_file():
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(65536), b""):
+                    digest.update(chunk)
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
 @dataclass(slots=True)
@@ -334,6 +356,14 @@ class Workspace:
         return resolved
 
     def __enter__(self) -> Path:
+        if self.manifest.runtime_identity is not None:
+            path, *expected = self.manifest.runtime_identity
+            try:
+                info = os.stat(path)
+            except OSError:
+                raise ConfigurationError("pinned runtime is unavailable") from None
+            if [info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size] != expected:
+                raise ConfigurationError("pinned runtime changed after experiment planning")
         source = self._source_path()
         _validate_loaded_private_files(self.manifest)
         if self.manifest.target.workspace_mode == "source":
@@ -360,6 +390,12 @@ class Workspace:
                 self.protected_secret_keys,
                 self._source_identity,
             )
+            if self.manifest.workspace_digest is not None and (
+                self.manifest.hmac_key is None
+                or workspace_fingerprint(destination, self.manifest.hmac_key)
+                != self.manifest.workspace_digest
+            ):
+                raise ConfigurationError("pinned workspace changed after experiment planning")
         except (OSError, ConfigurationError) as exc:
             with suppress(OSError):
                 self._temporary.cleanup()
