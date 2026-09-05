@@ -306,6 +306,9 @@ class Runner:
         self._reporter_bindings = bindings
         self.reporters = tuple(binding.reporter for binding in bindings)
         self.environment = snapshot_target_environment(manifest.target)
+        if (manifest.pinned_environment is not None
+                and self.environment != manifest.pinned_environment):
+            raise ConfigurationError("target environment changed after experiment planning")
         reporter_secrets: set[str] = set()
         reporter_credentials: set[str] = set()
         reporter_values: set[str] = set()
@@ -490,12 +493,13 @@ class Runner:
         ):
             raise ConfigurationError("case selection must name one or more configured case IDs")
         selected = tuple(case for case in self.cases if case_ids is None or case.id in case_ids)
+        batch_id = str(uuid.uuid4())
         runs: list[PublicRun] = []
         receipts: list[ReportReceipt] = []
         try:
             for case in selected:
                 for attempt in range(1, self.manifest.repetitions + 1):
-                    run = self._run_attempt(case, attempt)
+                    run = self._run_attempt(case, attempt, batch_id=batch_id)
                     runs.append(run)
                     durable_local_delivered = False
                     for binding in self._reporter_bindings:
@@ -560,7 +564,7 @@ class Runner:
                 )
         return RunBatch(runs=tuple(runs), receipts=tuple(receipts))
 
-    def _run_attempt(self, case: EvalCase, attempt: int) -> PublicRun:
+    def _run_attempt(self, case: EvalCase, attempt: int, *, batch_id: str) -> PublicRun:
         started = _utc_now()
         workspace_manager = Workspace(
             self.manifest,
@@ -613,6 +617,7 @@ class Runner:
             case=case,
             attempt=attempt,
             run_id=str(uuid.uuid4()),
+            batch_id=batch_id,
             started_at=started.isoformat(),
             completed_at=completed.isoformat(),
             result=result,

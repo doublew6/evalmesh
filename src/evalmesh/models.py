@@ -44,6 +44,7 @@ class EvalCase:
     expected: Mapping[str, JsonValue]
     grader_ids: tuple[str, ...] | None = None
     tags: tuple[str, ...] = ()
+    dimensions: Mapping[str, str] = field(default_factory=frozen_mapping)
 
     def __repr__(self) -> str:
         return "<EvalCase private>"
@@ -88,6 +89,8 @@ class TargetSpec:
     skip_git_repo_check: bool = False
     prompt_field: str = "prompt"
     skill: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
 
     def __repr__(self) -> str:
         return "<TargetSpec private>"
@@ -123,7 +126,11 @@ class Manifest:
     source_dir: Path
     manifest_path: Path
     suite_digest: str
+    variant: Mapping[str, str] = field(default_factory=frozen_mapping)
     hmac_key: bytes | None = None
+    workspace_digest: str | None = None
+    runtime_identity: tuple[str, int, int, int, int] | None = None
+    pinned_environment: Mapping[str, str] | None = None
     private_path_identities: tuple[tuple[Path, tuple[int, int]], ...] = ()
     private_file_identities: frozenset[tuple[int, int]] = field(default_factory=frozenset)
 
@@ -244,12 +251,15 @@ _PUBLIC_RUN_FACTORY_TOKEN = object()
 class PublicRun:
     schema_version: str
     run_id: str
+    batch_id: str
     subject_id: str
     suite_id: str
     suite_digest: str
     case_id: str
     attempt: int
     tags: tuple[str, ...]
+    variant: Mapping[str, str]
+    dimensions: Mapping[str, str]
     target_kind: str
     started_at: str
     completed_at: str
@@ -294,12 +304,15 @@ class PublicRun:
         return {
             "schema_version": self.schema_version,
             "run_id": self.run_id,
+            "batch_id": self.batch_id,
             "subject_id": self.subject_id,
             "suite_id": self.suite_id,
             "suite_digest": self.suite_digest,
             "case_id": self.case_id,
             "attempt": self.attempt,
             "tags": list(self.tags),
+            "variant": dict(self.variant),
+            "dimensions": dict(self.dimensions),
             "target_kind": self.target_kind,
             "started_at": self.started_at,
             "completed_at": self.completed_at,

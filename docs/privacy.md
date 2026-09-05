@@ -24,6 +24,9 @@ financial research, repository content, and credentials.
   sync must all succeed before remote reporting.
 - Absolute paths, hostnames, usernames, IPs, endpoints, argv values, and Git remotes
   are not report fields.
+- Monitoring inventories are private execution inputs. Their real paths, URLs,
+  automation IDs, job labels, expected revisions, and Skill contents never become
+  case expected values or reporter fields.
 
 ## Capture modes
 
@@ -109,6 +112,22 @@ Codex executable while `--ignore-user-config` remains enabled.
 An Agent's own Opik/OpenTelemetry exporter can bypass EvalMesh entirely. Disable
 automatic instrumentation in the target and route reporting through the privacy
 gateway.
+
+The separate runtime tracing plane is an explicit exception for an operator who wants
+real prompts and responses visible in a private Opik deployment. Its policy and
+content store must remain outside every Git worktree. Content arrives only at runtime,
+is recursively bounded/redacted, is stored in a mode-0600 local JSONL first, and is
+then sent by an isolated SDK worker. It never enters manifests, fixtures, examples,
+tests, command arguments, or repository configuration. See
+[Private runtime tracing](runtime-tracing.md).
+
+Inventory probes are deliberately fixed operations, not arbitrary shell commands.
+HTTP permits loopback plaintext or HTTPS, disables ambient proxies and redirects,
+and discards response bodies. TCP is loopback-only. Git, launchd, Docker, Skill, and
+Codex-automation probes use argv arrays with `shell=False` or bounded read-only file
+access; their raw output is discarded. A private inventory still grants the monitor
+permission to inspect the named host assets, so protect it with filesystem access
+controls and never commit it.
 
 ## Opik
 

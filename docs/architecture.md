@@ -21,8 +21,19 @@ versioned cases -> Adapter -> RawExecutionResult -> deterministic Graders
   and reporter interface.
 - Domain systems remain authoritative for domain metrics. They compute their own
   scoring and calibration values; EvalMesh consumes them.
-- Opik owns trace storage and the dashboard. OpenTelemetry/OpenInference can later be
-  added as an independent trace sink without changing score reporting.
+- Opik owns trace storage and the dashboard. OpenTelemetry/OpenInference can be used
+  as an independent runtime trace source without changing score reporting.
+
+Real Agent execution tracing is a second, explicit data plane:
+
+```text
+runtime prompt/tool events -> Runtime trace projection -> private JSONL -> Opik
+```
+
+It does not overload `Reporter` or turn raw execution data into `PublicRun`. Runtime
+content is admitted only by an untracked mode-0600 policy outside Git and is bounded
+and redacted before local-first delivery. See
+[Private runtime tracing](runtime-tracing.md).
 
 ## Stable identities
 

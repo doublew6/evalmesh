@@ -233,6 +233,16 @@ class CliDoctorReporterTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output.getvalue())["title"], "EvalMesh case JSONL row")
 
+    def test_inventory_schema_command_returns_private_contract(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(["schema", "inventory"])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            json.loads(output.getvalue())["title"],
+            "EvalMesh private monitoring inventory",
+        )
+
     def test_run_and_standalone_score_schemas_share_the_same_contract(self) -> None:
         schemas = resources.files("evalmesh.schemas")
         run_schema = json.loads(schemas.joinpath("run.schema.json").read_text(encoding="utf-8"))

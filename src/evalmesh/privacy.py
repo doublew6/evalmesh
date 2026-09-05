@@ -350,6 +350,14 @@ class PrivacyGateway:
                     type(tag) is not str or not _PUBLIC_IDENTIFIER.fullmatch(tag)
                     for tag in case.tags
                 )
+                or not isinstance(case.dimensions, Mapping)
+                or any(
+                    type(key) is not str
+                    or type(value) is not str
+                    or not _PUBLIC_IDENTIFIER.fullmatch(key)
+                    or not _PUBLIC_IDENTIFIER.fullmatch(value)
+                    for key, value in case.dimensions.items()
+                )
                 for case in cases
             )
         ):
@@ -615,6 +623,7 @@ class PrivacyGateway:
         case: EvalCase,
         attempt: int,
         run_id: str,
+        batch_id: str | None = None,
         started_at: str,
         completed_at: str,
         result: RawExecutionResult,
@@ -629,6 +638,7 @@ class PrivacyGateway:
                 case=case,
                 attempt=attempt,
                 run_id=run_id,
+                batch_id=batch_id,
                 started_at=started_at,
                 completed_at=completed_at,
                 result=result,
@@ -649,6 +659,7 @@ class PrivacyGateway:
         case: EvalCase,
         attempt: int,
         run_id: str,
+        batch_id: str | None,
         started_at: str,
         completed_at: str,
         result: RawExecutionResult,
@@ -658,6 +669,7 @@ class PrivacyGateway:
     ) -> PublicRun:
         if (
             type(run_id) is not str
+            or (batch_id is not None and type(batch_id) is not str)
             or type(started_at) is not str
             or type(completed_at) is not str
             or type(aggregate_score) not in {int, float}
@@ -666,6 +678,7 @@ class PrivacyGateway:
             raise PrivacyError("projection identifiers or outcome claims are invalid")
         try:
             parsed_run_id = uuid.UUID(run_id)
+            parsed_batch_id = uuid.UUID(batch_id or run_id)
             started = datetime.fromisoformat(started_at)
             completed = datetime.fromisoformat(completed_at)
             claimed_aggregate = float(aggregate_score)
@@ -680,6 +693,8 @@ class PrivacyGateway:
             or not 1 <= attempt <= manifest.repetitions
             or parsed_run_id.version != 4
             or str(parsed_run_id) != run_id.lower()
+            or parsed_batch_id.version != 4
+            or str(parsed_batch_id) != (batch_id or run_id).lower()
             or started.tzinfo is None
             or completed.tzinfo is None
             or completed < started
@@ -687,6 +702,16 @@ class PrivacyGateway:
             or not 0 <= claimed_aggregate <= 1
             or not _PUBLIC_IDENTIFIER.fullmatch(case.id)
             or any(not _PUBLIC_IDENTIFIER.fullmatch(tag) for tag in case.tags)
+            or any(
+                not _PUBLIC_IDENTIFIER.fullmatch(key)
+                or not _PUBLIC_IDENTIFIER.fullmatch(value)
+                for key, value in case.dimensions.items()
+            )
+            or any(
+                not _PUBLIC_IDENTIFIER.fullmatch(key)
+                or not _PUBLIC_IDENTIFIER.fullmatch(value)
+                for key, value in manifest.variant.items()
+            )
         ):
             raise PrivacyError("projection input does not match the configured suite")
         try:
@@ -794,12 +819,15 @@ class PrivacyGateway:
             _PUBLIC_RUN_FACTORY_TOKEN,
             schema_version="evalmesh.run.v1",
             run_id=run_id,
+            batch_id=str(parsed_batch_id),
             subject_id=manifest.subject_id,
             suite_id=manifest.suite_id,
             suite_digest=manifest.suite_digest,
             case_id=case.id,
             attempt=attempt,
             tags=case.tags,
+            variant=manifest.variant,
+            dimensions=case.dimensions,
             target_kind=manifest.target.kind,
             started_at=public_started_at,
             completed_at=public_completed_at,

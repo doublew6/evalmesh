@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:evalmesh:schema:experiment-plan:v1",
+  "title": "EvalMesh experiment-plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pinned",
+    "baseline",
+    "job_count",
+    "planned_attempts",
+    "max_workers",
+    "max_attempts",
+    "dispatch_timeout_seconds",
+    "jobs"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "evalmesh.experiment-plan.v1"
+    },
+    "pinned": {
+      "type": "boolean"
+    },
+    "baseline": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "job_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 256
+    },
+    "planned_attempts": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "max_workers": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8
+    },
+    "max_attempts": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "dispatch_timeout_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 86400
+    },
+    "jobs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "job_id",
+          "subject_id",
+          "suite_id",
+          "suite_digest",
+          "variant",
+          "case_count",
+          "repetitions",
+          "attempt_count"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          },
+          "subject_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          },
+          "suite_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          },
+          "suite_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "variant": {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 16,
+            "required": [
+              "id",
+              "model_id",
+              "reasoning_effort",
+              "execution_id"
+            ],
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+            }
+          },
+          "case_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "repetitions": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "attempt_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          }
+        }
+      }
+    }
+  }
+}

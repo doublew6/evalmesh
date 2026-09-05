@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:evalmesh:schema:gate-result:v1",
+  "title": "EvalMesh release gate result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "passed", "violation_codes", "candidate_batch_id",
+    "baseline_batch_id"
+  ],
+  "properties": {
+    "schema_version": {"const": "evalmesh.gate-result.v1"},
+    "passed": {"type": "boolean"},
+    "violation_codes": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "attempt_pass_rate_below_minimum", "pass_at_1_below_minimum",
+          "success_at_k_below_minimum", "stable_pass_at_k_below_minimum",
+          "critical_failure_budget_exceeded", "required_slice_missing",
+          "slice_attempt_pass_rate_below_minimum", "slice_pass_at_1_below_minimum",
+          "slice_success_at_k_below_minimum", "slice_stable_pass_at_k_below_minimum",
+          "slice_critical_failure_budget_exceeded", "suite_changed",
+          "regression_budget_exceeded", "removed_case_budget_exceeded",
+          "latency_comparison_unavailable", "p95_latency_delta_exceeded",
+          "metric_comparison_unavailable", "metric_mean_delta_exceeded"
+        ]
+      }
+    },
+    "candidate_batch_id": {"type": "string", "format": "uuid"},
+    "baseline_batch_id": {
+      "oneOf": [{"type": "string", "format": "uuid"}, {"type": "null"}]
+    }
+  }
+}

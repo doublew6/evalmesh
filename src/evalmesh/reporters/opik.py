@@ -170,7 +170,10 @@ class OpikReporter:
                 "metadata": {
                     "evalmesh_schema": run.schema_version,
                     "evalmesh_run_id": run.run_id,
+                    "evalmesh_batch_id": run.batch_id,
                     "suite_digest": run.suite_digest,
+                    "variant": dict(run.variant),
+                    "dimensions": dict(run.dimensions),
                     "target_kind": run.target_kind,
                     "duration_ms": run.duration_ms,
                     "aggregate_score": run.aggregate_score,

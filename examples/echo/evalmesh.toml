@@ -5,6 +5,10 @@ case_files = ["cases.jsonl"]
 repetitions = 2
 pass_threshold = 1.0
 
+[variant]
+id = "synthetic-candidate"
+application_id = "echo-app"
+
 [target]
 kind = "command"
 argv = ["{python}", "echo_agent.py"]

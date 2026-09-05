@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:evalmesh:schema:comparison:v1",
+  "title": "EvalMesh public evaluation comparison",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "subject_id", "suite_id", "baseline_suite_digest",
+    "candidate_suite_digest", "suite_changed", "baseline_batch_id",
+    "candidate_batch_id", "baseline_variant", "candidate_variant", "added_cases",
+    "removed_cases", "improved_cases", "regressed_cases", "unchanged_cases",
+    "incomparable_cases"
+  ],
+  "properties": {
+    "schema_version": {"const": "evalmesh.comparison.v1"},
+    "subject_id": {"$ref": "#/$defs/id"},
+    "suite_id": {"$ref": "#/$defs/id"},
+    "baseline_suite_digest": {"$ref": "#/$defs/digest"},
+    "candidate_suite_digest": {"$ref": "#/$defs/digest"},
+    "suite_changed": {"type": "boolean"},
+    "baseline_batch_id": {"type": "string", "format": "uuid"},
+    "candidate_batch_id": {"type": "string", "format": "uuid"},
+    "baseline_variant": {"$ref": "#/$defs/idMap"},
+    "candidate_variant": {"$ref": "#/$defs/idMap"},
+    "added_cases": {"$ref": "#/$defs/idArray"},
+    "removed_cases": {"$ref": "#/$defs/idArray"},
+    "improved_cases": {"$ref": "#/$defs/idArray"},
+    "regressed_cases": {"$ref": "#/$defs/idArray"},
+    "unchanged_cases": {"$ref": "#/$defs/idArray"},
+    "incomparable_cases": {"$ref": "#/$defs/idArray"}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "idMap": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {"$ref": "#/$defs/id"}
+    },
+    "idArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 10000,
+      "items": {"$ref": "#/$defs/id"}
+    }
+  }
+}

@@ -21,6 +21,18 @@
       "type": "array",
       "uniqueItems": true,
       "items": {"$ref": "#/$defs/id"}
+    },
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "task_type": {"$ref": "#/$defs/id"},
+        "risk_level": {"$ref": "#/$defs/id"},
+        "domain": {"$ref": "#/$defs/id"},
+        "source": {"$ref": "#/$defs/id"},
+        "difficulty": {"$ref": "#/$defs/id"},
+        "lifecycle": {"$ref": "#/$defs/id"}
+      }
     }
   },
   "$defs": {

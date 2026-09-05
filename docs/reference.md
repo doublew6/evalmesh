@@ -1,10 +1,13 @@
 # Configuration and grader reference
 
 `evalmesh validate MANIFEST` is the authoritative runtime validation command.
-`evalmesh schema manifest|case|run|score` prints the matching Draft 2020-12 JSON
+`evalmesh schema manifest|case|run|score|inventory` prints the matching Draft 2020-12 JSON
 Schema. Private-policy authorization, case-insensitive reserved-header checks, and
 cross-field/privacy rules cannot be expressed fully in the portable schema and are
 enforced by `validate`.
+
+`evalmesh monitor INVENTORY` validates a separate private inventory contract and
+compiles it into a temporary ordinary v1 suite. See [monitoring.md](monitoring.md).
 
 ## Suite manifest
 
@@ -15,6 +18,7 @@ enforced by `validate`.
 | `case_files` | yes | Unique, explicit relative JSONL paths; no `..` or symlinks |
 | `repetitions` | no | Integer 1–100; default 1 |
 | `pass_threshold` | no | Finite number 0–1; default 1 |
+| `variant` | no | Public-safe opaque version identities; defaults to `id = "default"` |
 | `target` | yes | Exactly one target configuration below |
 | `privacy` | no | Capture and projection limits |
 | `graders` | yes | 1–256 deterministic grader tables |
@@ -83,6 +87,14 @@ is bounded.
 
 ### Codex target
 
+Optional `model` selects the actual Codex model; optional `reasoning_effort`
+requires an explicit model. `evalmesh run --model MODEL_ID --reasoning-effort high`
+overrides these fields for one run. Neither field is accepted for command/HTTP
+targets. The requested settings appear in the public variant along with a
+loader-generated `execution_id`; a handwritten `variant.model_id` alone remains
+only a label. See [multi-project experiments](experiments.md) for model matrices,
+registries, creation templates, execution limits, and resume.
+
 ```toml
 [target]
 kind = "codex"
@@ -99,6 +111,9 @@ Codex runs as `codex exec - --ephemeral --json` with an explicit sandbox; the pr
 travels over stdin. `workspace_mode = "copy"` is mandatory. Existing Codex login
 access requires private-policy `use_host_codex_auth = true`. Because the copy excludes
 `.git`, `skip_git_repo_check = true` is also mandatory; see the integration guide.
+For text-mode targets with declared artifacts, a completed turn may omit a prose
+reply: the captured files are still independently graded. Missing completion,
+execution errors, timeouts and missing/incorrect required files remain failures.
 
 ## Cases
 
@@ -106,6 +121,17 @@ Every non-empty JSONL row requires `id`, `input`, and object `expected`. Optiona
 `grader_ids` selects graders for that case and `tags` supplies opaque labels. IDs and
 tags must be unique within their arrays. Each file is limited to 16 MiB and 10,000
 lines, each row to 1 MiB, and the full suite to 64 MiB and 10,000 non-empty records.
+
+Optional `dimensions` is a strict object whose supported fields are `task_type`,
+`risk_level`, `domain`, `source`, `difficulty`, and `lifecycle`. Values are opaque
+public-safe identifiers. EvalMesh does not assign domain meaning to them, except that
+analytics treats `risk_level = "critical"` as a critical release slice.
+
+Optional `[variant]` requires `id` and accepts `application_id`, `model_id`,
+`prompt_id`, `toolset_id`, and `knowledge_id`. These values identify a candidate
+without publishing a raw prompt, endpoint, path, or credential. Variant identity is
+reported with each run but is deliberately excluded from `suite_digest`, allowing
+two variants to be compared against the same suite contract.
 
 ## Graders
 
