@@ -1,0 +1,8 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "EvalMesh",
+  "description": "Dependency-free Python evaluation harness for AI agents, CLI tools, and skills with repeatable regression tests and privacy-aware reporting.",
+  "folders": ["docs", "examples"],
+  "excludeFolders": ["tests", "src"],
+  "excludeFiles": ["AGENTS.md", "CHANGELOG.md", "CODE_OF_CONDUCT.md"]
+}

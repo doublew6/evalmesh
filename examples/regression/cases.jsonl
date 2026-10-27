@@ -1,0 +1,2 @@
+{"id":"hello","input":{"message":"hello"},"expected":{"echo-matches":"hello"},"tags":["regression"]}
+{"id":"unicode","input":{"message":"你好"},"expected":{"echo-matches":"你好"},"tags":["regression"]}

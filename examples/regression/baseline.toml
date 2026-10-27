@@ -1,0 +1,27 @@
+schema_version = 1
+subject_id = "synthetic-echo-v1"
+suite_id = "echo-regression"
+case_files = ["cases.jsonl"]
+repetitions = 2
+pass_threshold = 1.0
+
+[target]
+kind = "command"
+argv = ["{python}", "agent.py", "--mode", "baseline"]
+workspace_mode = "copy"
+output_mode = "json"
+timeout_seconds = 10
+max_output_bytes = 65536
+
+[privacy]
+capture = "digest"
+
+[[graders]]
+id = "process-ok"
+kind = "exit_code"
+expected = 0
+
+[[graders]]
+id = "echo-matches"
+kind = "json_equals"
+actual_path = "message"

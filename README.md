@@ -1,5 +1,26 @@
 # EvalMesh
 
+**Repeatable regression tests for AI agents, CLI tools, automations, and skills.**
+
+[Run a passing baseline and a failing candidate](docs/regression-demo.md) · [Quick start](#quick-start) · [Manifest reference](docs/reference.md) · [Privacy](docs/privacy.md)
+
+Did a prompt, tool, or code change break an existing task? EvalMesh runs the same
+cases against each version and applies explicit graders. The included
+[regression example](examples/regression) catches a synthetic Unicode handling
+bug without a model, API key, or third-party runtime dependency:
+
+```bash
+evalmesh run examples/regression/baseline.toml
+# summary: attempts=4 pass_rate=1.000 reporting=ok; exit 0
+evalmesh run examples/regression/candidate.toml
+# summary: attempts=4 pass_rate=0.500 reporting=ok; exit 1 (intentional regression)
+```
+
+Install from the source checkout using [Quick start](#quick-start) first. The
+example measures an exact output contract, not general intelligence or production
+quality. Local reports use content-free metadata by default; remote reporting is
+optional.
+
 EvalMesh is a privacy-first evaluation harness for agents, automations, and
 skills. It runs repeatable black-box cases, applies deterministic graders, and sends
 sanitized results to local JSONL and, optionally, Opik.
